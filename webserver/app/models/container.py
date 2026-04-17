@@ -1,4 +1,3 @@
-import re
 from sqlalchemy import ForeignKey, Integer, Boolean, String
 from sqlalchemy.orm import Mapped, relationship, mapped_column
 from app.helpers.base_model import BaseModel
