@@ -442,32 +442,6 @@ class TestPostTask(BaseTest):
         assert response.status_code == 400
         assert response.json() == {"error": "\"outputs\" filed muct be a json object or dictionary"}
 
-    def test_create_task_no_output_field_reverts_to_default(
-            self,
-            cr_client,
-            reg_k8s_client,
-            post_json_admin_header,
-            client,
-            registry_client,
-            task_body,
-
-        ):
-        """
-        Tests task creation returns 201 but the volume mounted
-        is the default one
-        """
-        task_body.pop("outputs")
-        response = client.post(
-            '/tasks/',
-            json=task_body,
-            headers=post_json_admin_header
-        )
-        assert response.status_code == 201
-        reg_k8s_client["create_namespaced_pod_mock"].assert_called()
-        pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
-        assert len(pod_body.spec.containers[0].volume_mounts) == 1
-        assert pod_body.spec.containers[0].volume_mounts[0].mount_path == settings.task_pod_results_path
-
     def test_create_task_with_ds_name(
             self,
             cr_client,
@@ -739,28 +713,6 @@ class TestPostTask(BaseTest):
         # Check if the INPUT_PATH variable is set
         assert ["/data/in/file.csv"] == [ev.value for ev in pod_body.spec.containers[0].env if ev.name == "INPUT_PATH"]
 
-    def test_create_task_invalid_output_field(
-            self,
-            cr_client,
-            post_json_admin_header,
-            client,
-            registry_client,
-            task_body,
-
-        ):
-        """
-        Tests task creation returns 4xx request when output
-        is not a dictionary
-        """
-        task_body["outputs"] = []
-        response = client.post(
-            '/tasks/',
-            json=task_body,
-            headers=post_json_admin_header
-        )
-        assert response.status_code == 400
-        assert response.json() == {"error": "\"outputs\" field must be a json object or dictionary"}
-
     def test_create_task_invalid_inputs_field(
             self,
             cr_client,
@@ -790,8 +742,7 @@ class TestPostTask(BaseTest):
             post_json_admin_header,
             client,
             registry_client,
-            task_body,
-
+            task_body
         ):
         """
         Tests task creation returns 201 but the resutls volume mounted
