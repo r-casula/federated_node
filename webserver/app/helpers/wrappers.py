@@ -49,7 +49,7 @@ class Auth:
         if project_name and not kc_client.is_user_admin(token):
             dar: RequestModel = RequestModel.get_active_project(session, project_name, user["id"])
             if dar.dataset_id:
-                ds = Dataset.get_dataset_by_name_or_id(session, id=dar.dataset_id)
+                ds = Dataset.get_dataset_by_name_or_id(session, obj_id=dar.dataset_id)
                 resource = f"{ds.id}-{ds.name}"
 
         elif self.check_dataset:
@@ -59,7 +59,7 @@ class Auth:
                 dataset_name = flat_json.get("dataset_name", "")
 
             if dataset_id or dataset_name:
-                ds = Dataset.get_dataset_by_name_or_id(session, name=dataset_name, id=dataset_id)
+                ds = Dataset.get_dataset_by_name_or_id(session, name=dataset_name, obj_id=dataset_id)
                 resource = f"{ds.id}-{ds.name}"
 
         # If the user is an admin or system, ignore the project

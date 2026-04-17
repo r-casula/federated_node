@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 from typing import Any
 from datetime import datetime as dt
 
@@ -10,6 +11,9 @@ from app.models.dataset import Dataset
 
 
 class Catalogue(BaseModel):
+    """
+    Catalogue model
+    """
     __tablename__ = 'catalogues'
     __table_args__ = (
         UniqueConstraint('title', 'dataset_id'),
@@ -18,8 +22,14 @@ class Catalogue(BaseModel):
     version: MappedColumn[str] = mapped_column(String(256))
     title: MappedColumn[str] = mapped_column(String(256), nullable=False)
     description: MappedColumn[str] = mapped_column(String(4096), nullable=False)
-    created_at: MappedColumn[dt] = mapped_column(DateTime(timezone=False), server_default=func.now())
-    updated_at: MappedColumn[dt] = mapped_column(DateTime(timezone=False), onupdate=func.now(), nullable=True)
+    created_at: MappedColumn[dt] = mapped_column(
+        DateTime(timezone=False), server_default=func.now()
+    )
+    updated_at: MappedColumn[dt] = mapped_column(
+        DateTime(timezone=False), onupdate=func.now(), nullable=True
+    )
 
-    dataset_id: MappedColumn[Any] = mapped_column(Integer, ForeignKey(Dataset.id, ondelete='CASCADE'))
+    dataset_id: MappedColumn[Any] = mapped_column(
+        Integer, ForeignKey(Dataset.id, ondelete='CASCADE')
+    )
     dataset:Mapped["Dataset"] = relationship("Dataset")

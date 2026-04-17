@@ -8,7 +8,9 @@ from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
 
 from app.helpers.settings import settings
-from app.helpers.container_registries import AzureRegistry, BaseRegistry, DockerRegistry, GitHubRegistry
+from app.helpers.container_registries import (
+    AzureRegistry, BaseRegistry, DockerRegistry, GitHubRegistry
+)
 from app.helpers.base_model import BaseModel
 from app.helpers.exceptions import ContainerRegistryException, InvalidRequest
 from app.helpers.kubernetes import KubernetesClient
@@ -20,7 +22,7 @@ logger = logging.getLogger("registry_model")
 logger.setLevel(logging.INFO)
 
 
-class Registry(BaseModel):
+class Registry(BaseModel):# pylint: disable=missing-class-docstring
     __tablename__ = 'registries'
 
     id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -67,7 +69,9 @@ class Registry(BaseModel):
                 )
                 secret = v1.read_namespaced_secret(secret_name, settings.task_namespace)
             else:
-                raise InvalidRequest("Something went wrong when creating registry secrets")
+                raise InvalidRequest(
+                    "Something went wrong when creating registry secrets"
+                ) from apie
 
         dockerjson = json.loads(v1.decode_secret_value(secret.data['.dockerconfigjson']))
         dockerjson['auths'] = {
@@ -82,8 +86,10 @@ class Registry(BaseModel):
         v1.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret)
 
     def _get_creds(self) -> dict[str, Any] | None:
+        """Private method to return a dict of credentials"""
         if hasattr(self, "username") and hasattr(self, "password"):
             return {"user": self.username, "token": self.password}
+        return None
 
     def slugify_name(self) -> str:
         """
@@ -124,7 +130,7 @@ class Registry(BaseModel):
         _class: BaseRegistry = self.get_registry_class()
         return _class.list_repos()
 
-    def delete(self, session: Session):
+    def delete(self, session: Session, _commit:bool=True):
         nested = session.begin_nested()
         super().delete(session, False)
         v1 = KubernetesClient()
@@ -133,4 +139,4 @@ class Registry(BaseModel):
         except ApiException as apie:
             nested.rollback()
             logger.error("%s:\n\tDetails: %s", apie.reason, apie.body)
-            raise ContainerRegistryException("Error while deleting entity")
+            raise ContainerRegistryException("Error while deleting entity") from apie

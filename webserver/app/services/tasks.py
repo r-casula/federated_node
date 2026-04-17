@@ -33,7 +33,7 @@ class TaskService:
             ds_id = data.tags.get("dataset_id")
             ds_name = data.tags.get("dataset_name")
             if ds_name or ds_id:
-                task_definition["dataset"] = Dataset.get_dataset_by_name_or_id(session, name=ds_name, id=ds_id)
+                task_definition["dataset"] = Dataset.get_dataset_by_name_or_id(session, name=ds_name, obj_id=ds_id)
             else:
                 raise InvalidRequest("Administrators need to provide `tags.dataset_id` or `tags.dataset_name`")
         else:

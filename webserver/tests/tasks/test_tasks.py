@@ -252,7 +252,7 @@ class TestPostTask(BaseTest):
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
+        assert response.json()["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
 
     def test_create_task_no_name_fails(
             self,
@@ -440,7 +440,7 @@ class TestPostTask(BaseTest):
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json() == {"error": "\"outputs\" filed muct be a json object or dictionary"}
+        assert response.json() == {"error": "\"outputs\" field must be a json object or dictionary"}
 
     def test_create_task_with_ds_name(
             self,

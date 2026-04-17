@@ -276,7 +276,7 @@ class TestPostContainers(ContainersMixin):
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json()["error"] == '/testimage:0.1.1 does not have a tag. Please provide one in the format <image>:<tag> or <image>@sha256..'
+        assert resp.json()["error"] == '/testimage:0.1.1 does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256..'
 
 
 class TestPatchContainers(BaseTest):

@@ -1,7 +1,3 @@
-"""
-Import all models
-"""
-
 from app.models.audit import Audit
 from app.models.dataset import Dataset
 from app.models.catalogue import Catalogue

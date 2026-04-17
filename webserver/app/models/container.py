@@ -4,7 +4,7 @@ from app.helpers.base_model import BaseModel
 from app.models.registry import Registry
 
 
-class Container(BaseModel):
+class Container(BaseModel):# pylint: disable=missing-class-docstring
     __tablename__ = 'containers'
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -18,6 +18,7 @@ class Container(BaseModel):
     registry: Mapped["Registry"] = relationship("Registry", back_populates="containers")
 
     def full_image_name(self):
+        """Composes the registry/image name:tag or sha"""
         if self.sha:
             return f"{self.registry.url}/{self.name}@{self.sha}"
 

@@ -86,9 +86,9 @@ async def get_datasets_by_id_or_name(
     """
     GET /datasets/id endpoint. Gets dataset with a give id
     """
-    filters = {"name": None, "id": None}
+    filters = {"name": None, "obj_id": None}
     if dataset_identifier.isdigit():
-        filters["id"] = int(dataset_identifier)
+        filters["obj_id"] = int(dataset_identifier)
     else:
         filters["name"] = dataset_identifier
     ds = Dataset.get_dataset_by_name_or_id(session, **filters)
@@ -106,9 +106,9 @@ async def delete_datasets_by_id_or_name(
     DELETE /datasets/id endpoint. Deletes the dataset from the db and k8s secrets
         the DB entry deletion is prioritized to the k8s secret.
     """
-    filters = {"name": None, "id": None}
+    filters = {"name": None, "obj_id": None}
     if dataset_identifier.isdigit():
-        filters["id"] = int(dataset_identifier)
+        filters["obj_id"] = int(dataset_identifier)
     else:
         filters["name"] = dataset_identifier
     ds: Dataset = Dataset.get_dataset_by_name_or_id(session, **filters)
@@ -127,9 +127,9 @@ async def patch_datasets_by_id_or_name(
     """
     PATCH /datasets/id endpoint. Edits an existing dataset with a given id
     """
-    filters = {"name": None, "id": None}
+    filters = {"name": None, "obj_id": None}
     if dataset_identifier.isdigit():
-        filters["id"] = int(dataset_identifier)
+        filters["obj_id"] = int(dataset_identifier)
     else:
         filters["name"] = dataset_identifier
     ds = Dataset.get_dataset_by_name_or_id(session, **filters)
@@ -175,9 +175,9 @@ async def get_datasets_catalogue_by_id_or_name(
     GET /datasets/dataset_name/catalogue endpoint. Gets dataset's catalogue
     GET /datasets/id/catalogue endpoint. Gets dataset's catalogue
     """
-    filters = {"name": None, "id": None}
+    filters = {"name": None, "obj_id": None}
     if dataset_identifier.isdigit():
-        filters["id"] = int(dataset_identifier)
+        filters["obj_id"] = int(dataset_identifier)
     else:
         filters["name"] = dataset_identifier
 
@@ -202,9 +202,9 @@ async def get_datasets_dictionaries_by_id_or_name(
     GET /datasets/id/dictionaries endpoint.
         Gets the dataset's list of dictionaries
     """
-    filters = {"name": None, "id": None}
+    filters = {"name": None, "obj_id": None}
     if dataset_identifier.isdigit():
-        filters["id"] = int(dataset_identifier)
+        filters["obj_id"] = int(dataset_identifier)
     else:
         filters["name"] = dataset_identifier
     dataset = Dataset.get_dataset_by_name_or_id(session, **filters)
@@ -230,9 +230,9 @@ async def get_datasets_dictionaries_table_by_id_or_name(
     GET /datasets/id/dictionaries/table_name endpoint.
         Gets the dataset's table within its dictionaries
     """
-    filters = {"name": None, "id": None}
+    filters = {"name": None, "obj_id": None}
     if dataset_identifier.isdigit():
-        filters["id"] = int(dataset_identifier)
+        filters["obj_id"] = int(dataset_identifier)
     else:
         filters["name"] = dataset_identifier
     dataset = Dataset.get_dataset_by_name_or_id(session, **filters)
