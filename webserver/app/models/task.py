@@ -110,7 +110,7 @@ class Task(BaseModel):
             Container.name==image_name,
             Registry.url == registry,
         ).where(
-            (((Container.tag==tag) & (Container.tag != None)) | ((Container.sha==sha) & (Container.sha != None)))
+            (((Container.tag==tag) & (Container.tag is not None)) | ((Container.sha==sha) & (Container.sha is not None)))
         ).join(Registry)
         image:Container = (await session.execute(q)).scalars().one_or_none()
 
@@ -360,6 +360,7 @@ class Task(BaseModel):
         if not settings.task_controller:
             return
 
+        kc_client: Keycloak = await Keycloak.create()
         crd_client: KubernetesCRDClient = await KubernetesCRDClient.create()
         try:
             await crd_client.api_client.create_cluster_custom_object(
@@ -384,7 +385,7 @@ class Task(BaseModel):
                         },
                         "user": {
                             "idpId": "",
-                            "username": Keycloak().get_user_by_id(self.requested_by)["username"]
+                            "username": (await kc_client.get_user_by_id(self.requested_by))["username"]
                         }
                     }
                 }
@@ -392,7 +393,6 @@ class Task(BaseModel):
         except ApiException as apie:
             if apie.status != 409:
                 raise TaskCRDExecutionException(apie.body, apie.status) from apie
-            pass
 
     def get_review_status(self) -> str:
         """

@@ -1,7 +1,7 @@
 from typing import Any
 from datetime import datetime as dt
 
-from sqlalchemy import Integer, DateTime, String, ForeignKey, UniqueConstraint, select, update
+from sqlalchemy import Integer, DateTime, String, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func

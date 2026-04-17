@@ -1,5 +1,3 @@
-from typing import Any
-
 from datetime import datetime as dt
 from sqlalchemy import Integer, DateTime, String, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import Mapped, relationship, mapped_column

@@ -1,11 +1,10 @@
+import httpx
 from  pytest_asyncio import fixture
-import responses
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 from app.helpers.container_registries import AzureRegistry
 from app.models.container import Container
 from app.models.registry import Registry
-from app.helpers.settings import kc_settings
 
 from .common_registry_fixtures import *
 
@@ -30,84 +29,93 @@ def expected_digest_list():
     return "sha256:c1e51a68c68a448a"
 
 @fixture
-def registry_client(mocker):
+async def registry_client(mocker):
     mocker.patch(
-        'app.models.registry.AzureRegistry',
+        'app.models.registry.AzureRegistry.create',
         return_value=AsyncMock()
     )
 
 @fixture
-def azure_login_request(cr_name):
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add_passthru(kc_settings.keycloak_url)
-        rsps.add(
-            responses.GET,
-            f"https://{cr_name}/oauth2/token?service={cr_name}&scope=registry:catalog:*",
+async def azure_login_request(cr_name, respx_mock):
+    respx_mock.get(
+        f"https://{cr_name}/oauth2/token",
+        params={
+            "service": cr_name,
+            "scope": "registry:catalog:*"
+        }
+    ).mock(
+        return_value=httpx.Response(
             json={"access_token": "12345asdf"},
-            status=200
+            status_code=200
         )
-        yield rsps
+    )
 
 @fixture
-def tags_request(azure_login_request, expected_tags_list, expected_digest_list, expected_image_names, cr_name):
+def tags_request(respx_mock, azure_login_request, expected_tags_list, expected_digest_list, expected_image_names, cr_name):
     for image in expected_image_names:
-        azure_login_request.add(
-            responses.GET,
-            f"https://{cr_name}/oauth2/token?service={cr_name}&scope=repository:{image}:*",
-            json={"access_token": "12345asdf"},
-            status=200
+        respx_mock.get(
+            f"https://{cr_name}/oauth2/token",
+            params={
+                "service": cr_name,
+                "scope": f"repository:{image}:*"
+            }
+        ).mock(
+            return_value=httpx.Response(
+                json={"access_token": "12345asdf"},
+                status_code=200
+            )
         )
-        azure_login_request.add(
-            responses.GET,
-            f"https://{cr_name}/v2/{image}/tags/list",
-            json={"tags": expected_tags_list},
-            status=200
+        respx_mock.get(
+            f"https://{cr_name}/v2/{image}/tags/list"
+        ).mock(
+            return_value=httpx.Response(
+                json={"tags": expected_tags_list},
+                status_code=200
+            )
         )
         for t in expected_tags_list:
-            azure_login_request.add(
-                responses.GET,
-                f"https://{cr_name}/v2/{image}/manifests/{t}",
-                json={"config": {"digest": expected_digest_list}},
-                status=200
+            respx_mock.get(
+                f"https://{cr_name}/v2/{image}/manifests/{t}"
+            ).mock(
+                return_value=httpx.Response(
+                    json={"config": {"digest": expected_digest_list}},
+                    status_code=200
+                )
             )
-    azure_login_request.add(
-        responses.GET,
-        f"https://{cr_name}/v2/_catalog",
-        json={"repositories": expected_image_names},
-        status=200
-    )
-    yield azure_login_request
-
-@fixture
-def cr_client(mocker, registry_secret_mock):
-    return mocker.patch(
-        'app.helpers.container_registries.AzureRegistry',
-        return_value=Mock(
-            login=Mock(return_value="access_token"),
-            get_image_tags=Mock(return_value=["0.1.2", "1.0.0"])
+        respx_mock.get(
+            f"https://{cr_name}/v2/_catalog"
+        ).mock(
+            return_value=httpx.Response(
+                json={"repositories": expected_image_names},
+                status_code=200
+            )
         )
-    )
 
 @fixture
 def cr_client_404(mocker):
     mocker.patch(
-        'app.models.registry.AzureRegistry',
-        return_value=Mock(
-            login=Mock(return_value="access_token"),
+        'app.models.registry.AzureRegistry.create',
+        return_value=AsyncMock(
+            login=AsyncMock(return_value="access_token"),
             has_image_tag_or_sha=AsyncMock(return_value=False)
         )
     )
 
 @fixture
-def cr_class(mocker, cr_name):
-    with responses.RequestsMock() as rsps:
-        rsps.add(
-            responses.GET,
-            f"https://{cr_name}/oauth2/token?service={cr_name}&scope=registry:catalog:*",
+async def cr_class(respx_mock, cr_name) -> AzureRegistry:
+    respx_mock.get(
+        f"https://{cr_name}/oauth2/token",
+        params={
+            "service": cr_name,
+            "scope": "registry:catalog:*"
+        }
+    ).mock(
+        return_value=httpx.Response(
             json={"access_token": "12345asdf"},
-            status=200
+            status_code=200
         )
-        return AzureRegistry(cr_name, creds={"user": "", "token": ""})
+    )
+    return await AzureRegistry.create(cr_name, creds={"user": "", "token": ""})
 
 @fixture
 async def registry(client, registry_secret_mock, k8s_client, cr_name, azure_login_request, db_session) -> Registry:
