@@ -46,7 +46,7 @@ class TestAudits:
             mock_kc_client
         ):
         """
-        Test that the endpoint returns 401 for non-admin users
+        Test that the endpoint returns 403 for non-admin users
         """
         mock_kc_client["wrappers_kc"].return_value.is_token_valid.return_value = False
         response = client.get("/audit", headers=simple_user_header)
@@ -78,8 +78,8 @@ class TestAudits:
         date_filter = datetime.now().date()
         response = client.get(f"/audit?event_time__lte={date_filter}", headers=simple_admin_header)
 
-        assert response.status_code == 200, response.json
-        assert response.json["total"] == 0
+        assert response.status_code == 200
+        assert response.json["total"] == 1
 
     def test_sensitive_data_is_purged(
         self,

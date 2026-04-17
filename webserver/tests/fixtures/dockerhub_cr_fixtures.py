@@ -6,7 +6,7 @@ from unittest.mock import Mock
 from app.helpers.container_registries import DockerRegistry
 from app.models.container import Container
 from app.models.registry import Registry
-from app.helpers.keycloak import KEYCLOAK_URL
+from app.helpers.settings import kc_settings
 
 
 DOCKER_CLASS = 'app.models.registry.DockerRegistry'
@@ -44,7 +44,7 @@ def cr_client_404(mocker):
 @pytest.fixture
 def dockerhub_login_request() -> Generator[responses.RequestsMock, Any, None]:
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add_passthru(KEYCLOAK_URL)
+        rsps.add_passthru(kc_settings.keycloak_url)
         rsps.add(
             responses.GET,
             "https://hub.docker.com/v2/users/login/",
@@ -67,13 +67,13 @@ def registry(client, mocker, reg_k8s_client, dockerhub_login_request, cr_name) -
             json={"token": "12345asdf"},
             status=200
         )
-        reg = Registry(cr_name, '', '')
+        reg = Registry(url=cr_name, username='', password='')
         reg.add()
         return reg
 
 @pytest.fixture
 def container(client, k8s_client, registry, image_name) -> Container:
     img, tag = image_name.split(':')
-    cont = Container(img, registry, tag, dashboard=True)
+    cont = Container(name=img, registry=registry, tag=tag, dashboard=True)
     cont.add()
     return cont

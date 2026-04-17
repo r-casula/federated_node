@@ -8,6 +8,7 @@ All general configs are taken care in here:
 import logging
 import traceback
 from flask_swagger_ui import get_swaggerui_blueprint
+from pydantic import ValidationError
 from sqlalchemy import exc
 from werkzeug.exceptions import HTTPException
 
@@ -39,14 +40,18 @@ def create_app():
             'app_name': "Federated Node"
         }
     )
+    def create_handler(exception_class):
+        @app.errorhandler(exception_class)
+        def handler(e):
+            # Using 'e' instead of 'excp' inside here is safe
+            error_response = {"error": getattr(e, "description", str(e))}
+            if hasattr(e, "extra_fields"):
+                error_response["details"] = e.extra_fields
+            return error_response, getattr(e, "code", 500)
+        return handler
 
     for excp in [LogAndException, HTTPException]:
-        @app.errorhandler(excp)
-        def exception_handler(e:LogAndException):
-            error_response = {"error": e.description}
-            if getattr(e, "extra_fields", None):
-                error_response["details"] = e.extra_fields
-            return error_response, getattr(e, 'code', 500)
+        create_handler(excp)
 
     # Need to register the exception handler this way as we need access
     # to the db session
@@ -55,6 +60,18 @@ def create_app():
         logging.error(error)
         db.session.rollback()
         return {"error": "Record already exists"}, 500
+
+    @app.errorhandler(ValidationError)
+    # Special case, just so we won't return stacktraces
+    def pydandic_validation_handler(e:ValidationError):
+        list_of_messages = []
+        for err in e.errors():
+            list_of_messages.append({
+                "type": err["type"],
+                "field": err["loc"],
+                "message": err["msg"]
+            })
+        return {"error": list_of_messages}, 400
 
     @app.errorhandler(Exception)
     # Special case, just so we won't return stacktraces

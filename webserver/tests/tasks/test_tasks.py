@@ -1,10 +1,11 @@
+from datetime import timedelta
 import json
 from kubernetes.client.exceptions import ApiException
 import re
 from unittest import mock
 from unittest.mock import Mock
 
-from app.helpers.const import TASK_POD_RESULTS_PATH
+from app.helpers.settings import settings
 from app.helpers.base_model import db
 from app.models.task import Task
 from tests.fixtures.azure_cr_fixtures import *
@@ -67,7 +68,7 @@ class TestGetTasks:
             headers=post_json_user_header
         )
         assert resp.status_code == 201
-        task_id = resp.json["task_id"]
+        task_id = resp.json["id"]
 
         resp = client.get(
             f'/tasks/{task_id}',
@@ -139,6 +140,10 @@ class TestGetTasks:
                     container_statuses=[running_state]
                 )
             )
+        )
+        mocker.patch(
+            'app.models.task.Task.get_expiration_date',
+            return_value=datetime.now() + timedelta(days=1)
         )
 
         response_id = client.get(
@@ -231,7 +236,7 @@ class TestPostTask:
         pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
         # Make sure the two init containers are created
         assert len(pod_body.spec.init_containers) == 2
-        assert [pod.name for pod in pod_body.spec.init_containers] == [f"init-{response.json["task_id"]}", "fetch-data"]
+        assert [pod.name for pod in pod_body.spec.init_containers] == [f"init-{response.json["id"]}", "fetch-data"]
 
     def test_create_task_no_tag_fails(
             self,
@@ -258,12 +263,15 @@ class TestPostTask:
             post_json_admin_header,
             client,
             task_body,
-
+            container,
+            cr_name,
+            registry,
+            tags_request
         ):
         """
         Tests task creation returns an error when name is empty or null
         """
-        for value in ["", None]:
+        for value in ["", " ", " " * 10]:
             task_body["name"] = value
             response = client.post(
                 '/tasks/',
@@ -278,20 +286,24 @@ class TestPostTask:
             post_json_admin_header,
             client,
             task_body,
-
+            container,
+            cr_name,
+            registry,
+            tags_request
         ):
         """
-        Tests task creation returns an error when name is one or more spaces
+        Tests task creation returns an error when name is empty or null
+        or one or more spaces
         """
-        for value in [" ", " " * 10]:
-            task_body["name"] = value
-            response = client.post(
-                '/tasks/',
-                json=task_body,
-                headers=post_json_admin_header
-            )
-            assert response.status_code == 400
-            assert response.json["error"] == "name is a mandatory field"
+        task_body["name"] = None
+        response = client.post(
+            '/tasks/',
+            json=task_body,
+            headers=post_json_admin_header
+        )
+        assert response.status_code == 400
+        assert response.json["error"][0]["field"] == ["name"]
+        assert response.json["error"][0]["message"] == "Input should be a valid string"
 
     def test_automatic_delivery_via_crd(
         self,
@@ -332,7 +344,7 @@ class TestPostTask:
         Tests that with the missing conditions (from env variables)
         the auto delivery is not performed
         """
-        mocker.patch(f'app.models.task.TASK_CONTROLLER', "enabled")
+        mocker.patch(f'app.models.task.settings.task_controller', "enabled")
 
         response = client.post(
             '/tasks/',
@@ -343,8 +355,8 @@ class TestPostTask:
         reg_k8s_client["create_namespaced_pod_mock"].assert_called()
         v1_crd_mock.return_value.create_cluster_custom_object.assert_not_called()
 
-        mocker.patch(f'app.models.task.TASK_CONTROLLER', None)
-        mocker.patch(f'app.models.task.AUTO_DELIVERY_RESULTS', "enabled")
+        mocker.patch(f'app.models.task.settings.task_controller', None)
+        mocker.patch(f'app.models.task.settings.auto_delivery_results', "enabled")
 
         response = client.post(
             '/tasks/',
@@ -457,7 +469,7 @@ class TestPostTask:
         reg_k8s_client["create_namespaced_pod_mock"].assert_called()
         pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
         assert len(pod_body.spec.containers[0].volume_mounts) == 1
-        assert pod_body.spec.containers[0].volume_mounts[0].mount_path == TASK_POD_RESULTS_PATH
+        assert pod_body.spec.containers[0].volume_mounts[0].mount_path == settings.task_pod_results_path
 
     def test_create_task_with_ds_name(
             self,
@@ -798,7 +810,7 @@ class TestPostTask:
         reg_k8s_client["create_namespaced_pod_mock"].assert_called()
         pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
         assert len(pod_body.spec.containers[0].volume_mounts) == 2
-        assert TASK_POD_RESULTS_PATH in [vm.mount_path for vm in pod_body.spec.containers[0].volume_mounts]
+        assert settings.task_pod_results_path in [vm.mount_path for vm in pod_body.spec.containers[0].volume_mounts]
 
     def test_create_task_no_inputs_field_reverts_to_default(
             self,
@@ -824,7 +836,7 @@ class TestPostTask:
         reg_k8s_client["create_namespaced_pod_mock"].assert_called()
         pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
         assert len(pod_body.spec.containers[0].volume_mounts) == 2
-        assert [vm.mount_path for vm in pod_body.spec.containers[0].volume_mounts] == ["/mnt/inputs", TASK_POD_RESULTS_PATH]
+        assert [vm.mount_path for vm in pod_body.spec.containers[0].volume_mounts] == ["/mnt/inputs", settings.task_pod_results_path]
 
     def test_create_task_controller_not_deployed_no_crd(
             self,
@@ -996,6 +1008,7 @@ class TestCancelTask:
             headers=simple_admin_header
         )
         assert response.status_code == 201
+        assert "terminated" in response.json["status"]
 
     def test_cancel_404_task(
             self,

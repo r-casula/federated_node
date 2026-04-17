@@ -2,8 +2,8 @@ import base64
 import json
 from kubernetes.client import ApiException
 
-from app.helpers.const import TASK_NAMESPACE
 from tests.fixtures.azure_cr_fixtures import *
+from app.helpers.settings import settings, kc_settings
 
 
 class TestGetRegistriesApi:
@@ -52,7 +52,7 @@ class TestGetRegistriesApi:
         self,
         registry,
         client,
-        simple_user_header
+        mock_kc_client
     ):
         """
         Basic test for the GET /registries endpoint
@@ -133,7 +133,7 @@ class TestPostRegistriesApi:
         new_registry = "shiny.azurecr.io"
 
         with responses.RequestsMock() as rsps:
-            rsps.add_passthru(KEYCLOAK_URL)
+            rsps.add_passthru(kc_settings.keycloak_url)
             rsps.add(
                 responses.GET,
                 f"https://{new_registry}/oauth2/token?service={new_registry}&scope=registry:catalog:*",
@@ -161,7 +161,7 @@ class TestPostRegistriesApi:
         """
         new_registry = "shiny.azurecr.io"
         with responses.RequestsMock() as rsps:
-            rsps.add_passthru(KEYCLOAK_URL)
+            rsps.add_passthru(kc_settings.keycloak_url)
             rsps.add(
                 responses.GET,
                 f"https://{new_registry}/oauth2/token?service={new_registry}&scope=registry:catalog:*",
@@ -198,7 +198,7 @@ class TestPostRegistriesApi:
             })
         ]
         with responses.RequestsMock() as rsps:
-            rsps.add_passthru(KEYCLOAK_URL)
+            rsps.add_passthru(kc_settings.keycloak_url)
             rsps.add(
                 responses.GET,
                 f"https://{new_registry}/oauth2/token?service={new_registry}&scope=registry:catalog:*",
@@ -234,7 +234,7 @@ class TestPostRegistriesApi:
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json["error"] == 'Field "url" missing'
+        assert resp.json["error"][0] == {'field': ['url'], 'message': 'Field required', 'type': 'missing'}
 
     def test_create_duplicate(
         self,
@@ -247,13 +247,7 @@ class TestPostRegistriesApi:
         url as an existing one, fails
         """
         with responses.RequestsMock() as rsps:
-            rsps.add_passthru(KEYCLOAK_URL)
-            rsps.add(
-                responses.GET,
-                f"https://{registry.url}/oauth2/token?service={registry.url}&scope=registry:catalog:*",
-                json={"access_token": "12jio12buds89"},
-                status=200
-            )
+            rsps.add_passthru(kc_settings.keycloak_url)
             resp = client.post(
                 "/registries",
                 json={
@@ -286,7 +280,7 @@ class TestDeleteRegistries:
         )
         assert response.status_code == 204
         reg_k8s_client["delete_namespaced_secret_mock"].assert_called_with(
-            **{"name": secret_name, "namespace": TASK_NAMESPACE}
+            **{"name": secret_name, "namespace": settings.task_namespace}
         )
 
     def test_delete_registry_not_found(
@@ -392,7 +386,7 @@ class TestPatchRegistriesApi:
         registry,
         post_json_admin_header,
         k8s_client,
-        reg_k8s_client
+        dockerconfigjson_mock
     ):
         """
         Simple PATCH request test to check the registry credentials
@@ -402,6 +396,8 @@ class TestPatchRegistriesApi:
             "password": "new password token",
             "username": "shiny"
         }
+        k8s_client["read_namespaced_secret_mock"].return_value.data = dockerconfigjson_mock
+
         resp = client.patch(
             f"registries/{registry.id}",
             json=data,
@@ -411,7 +407,7 @@ class TestPatchRegistriesApi:
         k8s_client["patch_namespaced_secret_mock"].assert_called()
 
         # Only look after the first invocation as the first comes from the registry creation
-        reg_secret = k8s_client["patch_namespaced_secret_mock"].call_args_list[1][1]
+        reg_secret = k8s_client["patch_namespaced_secret_mock"].call_args_list[0][1]
 
         dockerconfig = base64.b64decode(reg_secret['body'].data['.dockerconfigjson']).decode()
         assert json.loads(dockerconfig)["auths"][registry.url]["password"] == data["password"]
@@ -435,7 +431,8 @@ class TestPatchRegistriesApi:
             json=data,
             headers=post_json_admin_header
         )
-        assert resp.status_code == 204
+        assert resp.status_code == 400
+        assert resp.json["error"] == "No valid changes detected"
         # it patches the regcreds-like secret at registry creation
         k8s_client["patch_namespaced_secret_mock"].call_count == 1
 
@@ -479,7 +476,7 @@ class TestPatchRegistriesApi:
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json["error"] == "Field host is not valid"
+        assert resp.json["error"] == "No valid changes detected"
 
     def test_patch_registry_k8s_fail(
         self,

@@ -11,18 +11,19 @@ from uuid import uuid4
 
 import urllib3
 from app.helpers.const import (
-    AUTO_DELIVERY_RESULTS, CLEANUP_AFTER_DAYS, CRD_DOMAIN, MEMORY_RESOURCE_REGEX, MEMORY_UNITS, CPU_RESOURCE_REGEX, PUBLIC_URL, TASK_CONTROLLER,
-    TASK_NAMESPACE, TASK_POD_RESULTS_PATH, TASK_POD_INPUTS_PATH, RESULTS_PATH, TASK_REVIEW
+    MEMORY_RESOURCE_REGEX, MEMORY_UNITS, CPU_RESOURCE_REGEX
 )
+from app.helpers.settings import settings
 from app.helpers.base_model import BaseModel, db
 from app.helpers.keycloak import Keycloak
 from app.helpers.kubernetes import KubernetesBatchClient, KubernetesCRDClient, KubernetesClient
-from app.helpers.exceptions import DBError, InvalidRequest, TaskCRDExecutionException, TaskImageException, TaskExecutionException
+from app.helpers.exceptions import (
+    DBError, InvalidRequest, TaskCRDExecutionException, TaskImageException, TaskExecutionException
+)
 from app.helpers.task_pod import TaskPod
 from app.models.dataset import Dataset
 from app.models.container import Container
 from app.models.registry import Registry
-from app.models.request import Request
 
 logger = logging.getLogger('task_model')
 logger.setLevel(logging.INFO)
@@ -41,7 +42,7 @@ class Task(db.Model, BaseModel):
     name = Column(String(256), nullable=False)
     docker_image = Column(String(256), nullable=False)
     description = Column(String(4096))
-    status = Column(String(256), default='scheduled')
+    pod_status = Column(String(256), server_default='scheduled')
     created_at = Column(DateTime(timezone=False), server_default=func.now())
     updated_at = Column(DateTime(timezone=False), onupdate=func.now())
     requested_by = Column(String(256), nullable=False)
@@ -49,106 +50,14 @@ class Task(db.Model, BaseModel):
     dataset_id = Column(Integer, ForeignKey(Dataset.id, ondelete='CASCADE'))
     dataset = relationship("Dataset")
 
-    def __init__(self,
-                 name:str,
-                 docker_image:str,
-                 requested_by:str,
-                 dataset:Dataset,
-                 executors:list[dict] = [],
-                 tags:dict = {},
-                 resources:dict = {},
-                 inputs:dict = {},
-                 outputs:dict = {},
-                 description:str = '',
-                 **kwargs
-                 ):
-        self.name = name
-        self.status = 'scheduled'
-        self.docker_image = docker_image
-        self.requested_by = requested_by
-        self.dataset = dataset
-        self.description = description
-        self.created_at = datetime.now()
-        self.updated_at = datetime.now()
-        self.tags = tags
-        self.executors = executors
-        self.resources = resources
-        self.inputs = inputs
-        self.outputs = outputs
-        self.is_from_controller = kwargs.get("from_controller", False)
-        self.db_query = kwargs.get("db_query", {})
-
-    @classmethod
-    def validate(cls, data:dict):
-        data["name"] = (data.get("name") or "").replace(" ", "")
-        if not data["name"]:
-            raise InvalidRequest("name is a mandatory field")
-
-        kc_client = Keycloak()
-        user_token = Keycloak.get_token_from_headers()
-
-        decoded_token = kc_client.decode_token(user_token)
-        data["requested_by"] = kc_client.get_user_by_email(decoded_token["email"])["id"]
-        user = kc_client.get_user_by_id(data["requested_by"])
-        # Support only for one image at a time, the standard is executors == list
-        executors = data["executors"][0]
-        data["docker_image"] = executors["image"]
-        is_from_controller = data.pop("task_controller", False)
-        repository = data.pop("repository", None)
-
-        data = super().validate(data)
-
-        data["from_controller"] = is_from_controller
-        # Dataset validation
-        if repository:
-            data["dataset"] = Dataset.query.filter(
-                Dataset.repository.ilike(repository)
-            ).one_or_none()
-            if data["dataset"] is None:
-                raise InvalidRequest(f"No datasets linked with the repository {repository}")
-
-        elif kc_client.is_user_admin(user_token):
-            ds_id = data.get("tags", {}).get("dataset_id")
-            ds_name = data.get("tags", {}).get("dataset_name")
-            if ds_name or ds_id:
-                data["dataset"] = Dataset.get_dataset_by_name_or_id(name=ds_name, id=ds_id)
-            else:
-                raise InvalidRequest("Administrators need to provide `tags.dataset_id` or `tags.dataset_name`")
-        else:
-            data["dataset"] = Request.get_active_project(
-                data["project_name"],
-                user["id"]
-            ).dataset
-
-        # Docker image validation
-        Container.validate_image_format(data["docker_image"], data["docker_image"])
-        data["docker_image"] = cls.get_image_with_repo(data["docker_image"])
-
-        # Output volumes validation
-        if not isinstance(data.get("outputs", {}), dict):
-            raise InvalidRequest("\"outputs\" field must be a json object or dictionary")
-        if not data.get("outputs", {}):
-            data["outputs"] = {"results": TASK_POD_RESULTS_PATH}
-        if not isinstance(data.get("inputs", {}), dict):
-            raise InvalidRequest("\"inputs\" field must be a json object or dictionary")
-        if not data.get("inputs", {}):
-            data["inputs"] = {"inputs.csv": TASK_POD_INPUTS_PATH}
-
-        # Validate resource values
-        if "resources" in data:
-            cls.validate_cpu_resources(
-                data["resources"].get("limits", {}).get("cpu"),
-                data["resources"].get("requests", {}).get("cpu")
-            )
-            cls.validate_memory_resources(
-                data["resources"].get("limits", {}).get("memory"),
-                data["resources"].get("requests", {}).get("memory")
-            )
-        if data.get("db_query") is not None and "query" not in data["db_query"]:
-            raise InvalidRequest("`db_query` field must include a `query`")
-
-        data["db_query"] = data.pop("db_query", {})
-        return data
+    def __init__(self, **kwargs):
+        self.executors = kwargs.pop("executors")
+        self.outputs = kwargs.pop("outputs", {})
+        self.inputs = kwargs.pop("inputs", {})
+        self.is_from_controller = kwargs.pop("from_controller", False)
+        self.db_query = kwargs.pop("db_query", {})
+        self.resources = kwargs.pop("resources", {})
+        super().__init__(**kwargs)
 
     @classmethod
     def validate_cpu_resources(cls, limit_value:str, request_value:str):
@@ -272,7 +181,7 @@ class Task(db.Model, BaseModel):
         """
         return f"{self.name.lower().replace(' ', '-')}-{uuid4()}"
 
-    def get_expiration_date(self) -> str:
+    def get_expiration_date(self, as_dt:bool=False) -> str|datetime:
         """
         In order to help with the cleanup process we set a lable for
         - pod
@@ -284,10 +193,18 @@ class Task(db.Model, BaseModel):
         Running `kubectl delete pvc -n analytics -l "delete_by=$(date +%Y%m%d)"` will bulk delete
         all pvcs to be deleted today.
         """
-        return (datetime.now() + timedelta(days=CLEANUP_AFTER_DAYS)).strftime("%Y%m%d")
+        exp_date = datetime.now() + timedelta(days=settings.cleanup_after_days)
+        if as_dt:
+            return exp_date
+
+        return exp_date.strftime("%Y%m%d")
 
     def needs_crd(self):
-        return ((not self.is_from_controller) and TASK_CONTROLLER is not None and AUTO_DELIVERY_RESULTS is not None )
+        return (
+            (not self.is_from_controller) and \
+                settings.task_controller is not None \
+                    and settings.auto_delivery_results is not None
+            )
 
     def run(self, validate=False):
         """
@@ -301,7 +218,7 @@ class Task(db.Model, BaseModel):
 
         command=None
         if len(self.executors):
-            command=self.executors[0].get("command", '')
+            command= self.executors[0].get("command", '')
 
         image: Container = self.get_image_with_repo(self.docker_image, False)
 
@@ -331,7 +248,7 @@ class Task(db.Model, BaseModel):
                 raise TaskExecutionException("Pod is already running", code=409)
 
             v1.create_namespaced_pod(
-                namespace=TASK_NAMESPACE,
+                namespace=settings.task_namespace,
                 body=body,
                 pretty='true'
             )
@@ -350,7 +267,7 @@ class Task(db.Model, BaseModel):
         """
         v1 = KubernetesClient()
         running_pods = v1.list_namespaced_pod(
-            TASK_NAMESPACE,
+            settings.task_namespace,
             label_selector=f"task_id={self.id}"
         )
         try:
@@ -365,7 +282,8 @@ class Task(db.Model, BaseModel):
         except IndexError:
             return
 
-    def get_status(self) -> dict | str:
+    @property
+    def status(self):
         """
         k8s sdk returns a bunch of nested objects as a pod's status.
         Here the objects are deconstructed and a customized dictionary is returned
@@ -374,10 +292,15 @@ class Task(db.Model, BaseModel):
             :dict: if the pod exists
             :str: if the pod is not found or deleted
         """
+        status = self.pod_status
+        if self.get_expiration_date(as_dt=True) < datetime.now():
+            self.pod_status = 'deleted'
+            return self.pod_status
+
         try:
             status_obj = self.get_current_pod(is_running=False).status.container_statuses
             if status_obj is None:
-                return self.status
+                return status
 
             status_obj = status_obj[0].state
 
@@ -386,7 +309,6 @@ class Task(db.Model, BaseModel):
                 if st is not None:
                     break
 
-            self.status = status
             returned_status =  {
                 "started_at": st.started_at
             }
@@ -396,11 +318,13 @@ class Task(db.Model, BaseModel):
                     "exit_code": getattr(st, "exit_code", None),
                     "reason": getattr(st, "reason", None)
                 })
+            self.pod_status = status
             return {
                 status: returned_status
             }
         except AttributeError:
-            return self.status if self.status != 'running' else 'deleted'
+            self.pod_status = status if status != 'running' else 'deleted'
+            return self.pod_status
 
     def terminate_pod(self):
         """
@@ -410,19 +334,18 @@ class Task(db.Model, BaseModel):
         v1 = KubernetesClient()
         has_error = False
         try:
-            v1.delete_namespaced_pod(self.pod_name(), namespace=TASK_NAMESPACE)
+            v1.delete_namespaced_pod(self.pod_name(), namespace=settings.task_namespace)
         except ApiException as kexc:
             logger.error(kexc.reason)
             has_error = True
 
         try:
-            self.status = 'cancelled'
+            self.pod_status = 'cancelled'
         except Exception as exc:
             raise DBError("An error occurred while updating") from exc
 
         if has_error:
             raise TaskExecutionException("Task already cancelled")
-        return self.sanitized_dict()
 
     def get_results(self):
         """
@@ -436,7 +359,7 @@ class Task(db.Model, BaseModel):
             "persistent_volumes": [
                 {
                     "name": f"{self.get_current_pod(is_running=False).metadata.name}-volclaim",
-                    "mount_path": TASK_POD_RESULTS_PATH,
+                    "mount_path": settings.task_pod_results_path,
                     "vol_name": "data",
                     "sub_path": f"{self.id}/results"
                 }
@@ -448,7 +371,7 @@ class Task(db.Model, BaseModel):
         })
         try:
             v1_batch.create_namespaced_job(
-                namespace=TASK_NAMESPACE,
+                namespace=settings.task_namespace,
                 body=job,
                 pretty='true'
             )
@@ -456,13 +379,13 @@ class Task(db.Model, BaseModel):
             v1 = KubernetesClient()
             v1.is_pod_ready(label=f"job-name={job_name}")
 
-            job_pod = v1.list_namespaced_pod(namespace=TASK_NAMESPACE, label_selector=f"job-name={job_name}").items[0]
+            job_pod = v1.list_namespaced_pod(namespace=settings.task_namespace, label_selector=f"job-name={job_name}").items[0]
 
             res_file = v1.cp_from_pod(
                 pod_name=job_pod.metadata.name,
-                source_path=TASK_POD_RESULTS_PATH,
-                dest_path=f"{RESULTS_PATH}/{self.id}/results",
-                out_name=f"{PUBLIC_URL}-results-{self.id}"
+                source_path=settings.task_pod_results_path,
+                dest_path=f"{settings.results_path}/{self.id}/results",
+                out_name=f"{settings.public_url}-results-{self.id}"
             )
             v1.delete_pod(job_pod.metadata.name)
             v1_batch.delete_job(job_name)
@@ -484,20 +407,20 @@ class Task(db.Model, BaseModel):
         by the controller at this stage, so we populate them
         with default values.
 
-        If the TASK_CONTROLLER env variable is not set, do nothing
+        If the settings.task_controller env variable is not set, do nothing
         """
         crd_client = KubernetesCRDClient()
         try:
             crd_client.create_cluster_custom_object(
-                CRD_DOMAIN, 'v1', 'analytics',
+                settings.crd_domain, 'v1', 'analytics',
                 {
-                    "apiVersion": f"{CRD_DOMAIN}/v1",
+                    "apiVersion": f"{settings.crd_domain}/v1",
                     "kind": "Analytics",
                     "metadata": {
                         "annotations": {
-                            f"{CRD_DOMAIN}/user": 'ok',
-                            f"{CRD_DOMAIN}/task_id": str(self.id),
-                            f"{CRD_DOMAIN}/done": 'true'
+                            f"{settings.crd_domain}/user": 'ok',
+                            f"{settings.crd_domain}/task_id": str(self.id),
+                            f"{settings.crd_domain}/done": 'true'
                         },
                         "name": f"fn-task-{self.id}"
                     },
@@ -530,26 +453,15 @@ class Task(db.Model, BaseModel):
         """
         return REVIEW_STATUS[self.review_status]
 
-    def sanitized_dict(self):
-        """
-        Extend the method to add custom status and review
-        """
-        san_dict = super().sanitized_dict()
-        san_dict["status"] = self.get_status()
-        if TASK_REVIEW:
-            san_dict["review_status"] = self.get_review_status()
-
-        return san_dict
-
     def crd_name(self):
         """
         CRD name is set here for consistency's sake
         """
         v1_crds = KubernetesCRDClient().list_cluster_custom_object(
-            CRD_DOMAIN, "v1", "analytics"
+            settings.crd_domain, "v1", "analytics"
         )
         for crd in v1_crds["items"]:
-            if crd["metadata"]["annotations"].get(f"{CRD_DOMAIN}/task_id") == str(self.id):
+            if crd["metadata"]["annotations"].get(f"{settings.crd_domain}/task_id") == str(self.id):
                 return crd["metadata"]["name"]
 
     def get_task_crd(self) -> V1CustomResourceDefinition|None:
@@ -560,7 +472,7 @@ class Task(db.Model, BaseModel):
         crd_client = KubernetesCRDClient()
         try:
             return crd_client.get_cluster_custom_object(
-                CRD_DOMAIN,
+                settings.crd_domain,
                 "v1",
                 "analytics",
                 self.crd_name()
@@ -583,9 +495,9 @@ class Task(db.Model, BaseModel):
                 raise TaskExecutionException("Failed to update result delivery")
 
             annotations = task_crd["metadata"].get("annotations", {})
-            annotations[f"{CRD_DOMAIN}/approved"] = str(approval)
+            annotations[f"{settings.crd_domain}/approved"] = str(approval)
             crd_client.patch_cluster_custom_object(
-                CRD_DOMAIN, "v1", "analytics", self.crd_name(),
+                settings.crd_domain, "v1", "analytics", self.crd_name(),
                 [{"op": "add", "path": "/metadata/annotations", "value": annotations}]
             )
         except ApiException as apie:
@@ -595,7 +507,7 @@ class Task(db.Model, BaseModel):
         """
         Retrieve the pod's logs
         """
-        if 'waiting' in self.get_status():
+        if 'waiting' in self.status:
             return "Task queued"
 
         pod = self.get_current_pod(is_running=False)
@@ -606,7 +518,7 @@ class Task(db.Model, BaseModel):
         try:
             return v1.read_namespaced_pod_log(
                 pod.metadata.name, timestamps=True,
-                namespace=TASK_NAMESPACE,
+                namespace=settings.task_namespace,
                 container=pod.metadata.name
             ).splitlines()
         except ApiException as apie:

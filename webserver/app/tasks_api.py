@@ -13,8 +13,9 @@ tasks-related endpoints:
 from datetime import datetime, timedelta
 from http import HTTPStatus
 from flask import Blueprint, request, send_file
+from pydantic import ValidationError
 
-from app.helpers.const import CLEANUP_AFTER_DAYS, PUBLIC_URL, TASK_REVIEW
+from app.helpers.settings import settings
 from app.helpers.exceptions import (
     DBRecordNotFoundError, FeatureNotAvailableException,
     UnauthorizedError, InvalidRequest
@@ -22,8 +23,12 @@ from app.helpers.exceptions import (
 from app.helpers.keycloak import Keycloak
 from app.helpers.wrappers import audit, auth
 from app.helpers.base_model import db
-from app.helpers.query_filters import parse_query_params
+from app.helpers.query_filters import apply_filters
 from app.models.task import Task
+from app.schemas.pagination import PageResponse
+from app.schemas.tasks import TaskCreate, TaskFilters, TaskRead
+from app.services.tasks import TaskService
+
 
 bp = Blueprint('tasks', __name__, url_prefix='/tasks')
 session = db.session
@@ -44,6 +49,7 @@ def does_user_own_task(task:Task):
     if task.requested_by != user_id and not kc_client.is_user_admin(token):
         raise UnauthorizedError("User does not have enough permissions")
 
+
 @bp.route('/service-info', methods=['GET'])
 @audit
 @auth(scope='can_do_admin')
@@ -56,6 +62,7 @@ def get_service_info():
         "doc": "Part of the PHEMS network"
     }, HTTPStatus.OK
 
+
 @bp.route('/', methods=['GET'])
 @bp.route('', methods=['GET'])
 @audit
@@ -64,7 +71,14 @@ def get_tasks():
     """
     GET /tasks/ endpoint. Gets the list of tasks
     """
-    return parse_query_params(Task, request.args.copy()), 200
+    try:
+        filter_params = TaskFilters(**request.args.to_dict())
+    except ValidationError as ve:
+        raise InvalidRequest(ve.errors()) from ve
+
+    pagination = apply_filters(Task, filter_params)
+    return PageResponse[TaskRead].model_validate(pagination).model_dump(), HTTPStatus.OK
+
 
 @bp.route('/<task_id>', methods=['GET'])
 @audit
@@ -77,7 +91,8 @@ def get_task_id(task_id):
 
     does_user_own_task(task)
 
-    return task.sanitized_dict(), HTTPStatus.OK
+    return TaskRead.model_validate(task).model_dump(), HTTPStatus.OK
+
 
 @bp.route('/<task_id>/cancel', methods=['POST'])
 @audit
@@ -91,7 +106,9 @@ def cancel_tasks(task_id):
     does_user_own_task(task)
 
     # Should remove pod/stop ML pipeline
-    return task.terminate_pod(), HTTPStatus.CREATED
+    task.terminate_pod()
+    return TaskRead.model_validate(task).model_dump(), HTTPStatus.CREATED
+
 
 @bp.route('/', methods=['POST'])
 @bp.route('', methods=['POST'])
@@ -102,17 +119,15 @@ def post_tasks():
     POST /tasks/ endpoint. Creates a new task
     """
     try:
-        req_body = request.json
-        req_body["project_name"] = request.headers.get("project-name")
-        body = Task.validate(req_body)
-        task = Task(**body)
-        task.add()
+        data = TaskCreate(**request.json)
+        task = TaskService.add(data=data)
         # Create pod/start ML pipeline
         task.run()
-        return {"task_id": task.id}, HTTPStatus.CREATED
+        return TaskRead.model_validate(task).model_dump(), HTTPStatus.CREATED
     except:
         session.rollback()
         raise
+
 
 @bp.route('/validate', methods=['POST'])
 @audit
@@ -124,8 +139,9 @@ def post_tasks_validate():
     """
     req_body = request.json
     req_body["project_name"] = request.headers.get("project-name")
-    Task.validate(req_body)
+    TaskCreate(**req_body)
     return "Ok", 200
+
 
 @bp.route('/<task_id>/results', methods=['GET'])
 @audit
@@ -145,14 +161,15 @@ def get_task_results(task_id):
     kc_client = Keycloak()
     token = kc_client.get_token_from_headers()
     # admin should be able to fetch them regardless
-    if TASK_REVIEW and not task.review_status and not kc_client.is_user_admin(token):
+    if settings.task_review and not task.review_status and not kc_client.is_user_admin(token):
         return {"status": task.get_review_status()}, 400
 
-    if task.created_at.date() + timedelta(days=CLEANUP_AFTER_DAYS) <= datetime.now().date():
+    if task.created_at.date() + timedelta(days=settings.cleanup_after_days) <= datetime.now().date():
         return {"error": "Tasks results are not available anymore. Please, run the task again"}, 500
 
     results_file = task.get_results()
-    return send_file(results_file, download_name=f"{PUBLIC_URL}-{task_id}-results.zip"), 200
+    return send_file(results_file, download_name=f"{settings.public_url}-{task_id}-results.zip"), 200
+
 
 @bp.route('/<task_id>/logs', methods=['GET'])
 @audit
@@ -169,6 +186,7 @@ def get_tasks_logs(task_id:int):
 
     return {"logs": task.get_logs()}, 200
 
+
 @bp.route('/<task_id>/results/approve', methods=['POST'])
 @audit
 @auth(scope='can_admin_task')
@@ -178,7 +196,7 @@ def approve_results(task_id):
         Approves the release (automatic or manual) of
         a task's results
     """
-    if not TASK_REVIEW:
+    if not settings.task_review:
         raise FeatureNotAvailableException("Task Review")
 
     task: Task = Task.get_by_id(task_id)
@@ -196,6 +214,7 @@ def approve_results(task_id):
         "status": task.get_review_status()
     }, HTTPStatus.CREATED
 
+
 @bp.route('/<task_id>/results/block', methods=['POST'])
 @audit
 @auth(scope='can_admin_task')
@@ -205,7 +224,7 @@ def block_results(task_id):
         Blocks the release (automatic or manual) of
         a task's results
     """
-    if not TASK_REVIEW:
+    if not settings.task_review:
         raise FeatureNotAvailableException("Task Review")
 
     task = Task.get_by_id(task_id)

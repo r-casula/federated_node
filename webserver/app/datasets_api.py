@@ -15,9 +15,13 @@ from http import HTTPStatus
 from datetime import datetime
 from flask import Blueprint, request
 from kubernetes.client import ApiException
+from pydantic import ValidationError
+
+from .helpers.query_filters import apply_filters
+from .services.datasets import DatasetService
 
 from .helpers.base_model import db
-from .helpers.const import DEFAULT_NAMESPACE
+from .helpers.settings import settings
 from .helpers.exceptions import DBRecordNotFoundError, InvalidRequest
 from .helpers.keycloak import Keycloak
 from .helpers.kubernetes import KubernetesClient
@@ -27,6 +31,10 @@ from .models.dataset import Dataset
 from .models.catalogue import Catalogue
 from .models.dictionary import Dictionary
 from .models.request import Request
+from .schemas.catalogues import CatalogueRead
+from .schemas.datasets import DatasetCreate, DatasetFilters, DatasetRead, DatasetUpdate
+from .schemas.dictionaries import DictionaryRead
+from .schemas.pagination import PageResponse
 
 
 bp = Blueprint('datasets', __name__, url_prefix='/datasets')
@@ -34,6 +42,7 @@ session = db.session
 
 logger = logging.getLogger("dataset_api")
 logger.setLevel(logging.INFO)
+
 
 @bp.route('/', methods=['GET'])
 @bp.route('', methods=['GET'])
@@ -43,7 +52,14 @@ def get_datasets():
     """
     GET /datasets/ endpoint. Returns a list of all datasets
     """
-    return Dataset.get_all(), HTTPStatus.OK
+    try:
+        filter_params = DatasetFilters(**request.args.to_dict())
+    except ValidationError as ve:
+        raise InvalidRequest(ve.errors()) from ve
+
+    pagination = apply_filters(Dataset, filter_params)
+    return PageResponse[DatasetRead].model_validate(pagination).model_dump(), HTTPStatus.OK
+
 
 @bp.route('/', methods=['POST'])
 @bp.route('', methods=['POST'])
@@ -53,39 +69,10 @@ def post_datasets():
     """
     POST /datasets/ endpoint. Creates a new dataset
     """
-    try:
-        body = Dataset.validate(request.json)
-        cata_body = body.pop("catalogue", {})
-        dict_body = body.pop("dictionaries", [])
-        dataset = Dataset(**body)
+    data = DatasetCreate(**request.json)
+    dataset: Dataset = DatasetService.add(data)
+    return DatasetRead.model_validate(dataset).model_dump(), HTTPStatus.CREATED
 
-        kc_client = Keycloak()
-        token_info = kc_client.decode_token(kc_client.get_token_from_headers())
-        user_id = kc_client.get_user_by_email(token_info["email"])["id"]
-        dataset.add(
-            commit=False,
-            user_id=user_id
-        )
-        if cata_body:
-            cata_data = Catalogue.validate(cata_body)
-            catalogue = Catalogue(dataset=dataset, **cata_data)
-            catalogue.add(commit=False)
-
-        # Dictionary should be a list of dict. If not raise an error and revert changes
-        if not isinstance(dict_body, list):
-            session.rollback()
-            raise InvalidRequest("dictionaries should be a list.")
-
-        for d in dict_body:
-            dict_data = Dictionary.validate(d)
-            dictionary = Dictionary(dataset=dataset, **dict_data)
-            dictionary.add(commit=False)
-        session.commit()
-        return { "dataset_id": dataset.id, "url": dataset.url }, 201
-
-    except:
-        session.rollback()
-        raise
 
 @bp.route('/<int:dataset_id>', methods=['GET'])
 @bp.route('/<dataset_name>', methods=['GET'])
@@ -96,7 +83,8 @@ def get_datasets_by_id_or_name(dataset_id:int=None, dataset_name:str=None):
     GET /datasets/id endpoint. Gets dataset with a give id
     """
     ds = Dataset.get_dataset_by_name_or_id(name=dataset_name, id=dataset_id)
-    return Dataset.sanitized_dict(ds), HTTPStatus.OK
+    return DatasetRead.model_validate(ds).model_dump(), HTTPStatus.OK
+
 
 @bp.route('/<int:dataset_id>', methods=['DELETE'])
 @bp.route('/<dataset_name>', methods=['DELETE'])
@@ -118,7 +106,7 @@ def delete_datasets_by_id_or_name(dataset_id:int=None, dataset_name:str=None):
 
     v1 = KubernetesClient()
     try:
-        v1.delete_namespaced_secret(secret_name, DEFAULT_NAMESPACE)
+        v1.delete_namespaced_secret(secret_name, settings.default_namespace)
     except ApiException as apie:
         if apie.status != 404:
             logger.error(apie)
@@ -127,6 +115,7 @@ def delete_datasets_by_id_or_name(dataset_id:int=None, dataset_name:str=None):
 
     session.commit()
     return {}, 204
+
 
 @bp.route('/<int:dataset_id>', methods=['PATCH'])
 @bp.route('/<dataset_name>', methods=['PATCH'])
@@ -138,24 +127,14 @@ def patch_datasets_by_id_or_name(dataset_id:int=None, dataset_name:str=None):
     """
     ds = Dataset.get_dataset_by_name_or_id(dataset_id, dataset_name)
 
+    body = DatasetUpdate(**request.json).model_dump(exclude_unset=True)
     old_ds_name = ds.name
     # Update validation doesn't have required fields
-    body = request.json
-    body.pop("id", None)
-    cata_body = body.pop("catalogue", {})
-    dict_body = body.pop("dictionaries", [])
-
-    # Dictionary should be a list of dict. If not raise an error and revert changes
-    if not isinstance(dict_body, list):
-        session.rollback()
-        raise InvalidRequest("dictionaries should be a list.")
-
-    for k in body:
-        if not hasattr(ds, k) and k not in ["username", "password"]:
-            raise InvalidRequest(f"Field {k} is not a valid one")
+    if not body:
+        raise InvalidRequest("No valid changes detected")
 
     try:
-        ds.update(**body)
+        DatasetService.update(ds, body)
         # Also make sure all the request clients are updated with this
         if body.get("name", None) is not None and body.get("name", None) != old_ds_name:
             dars = Request.query.with_entities(Request.requested_by, Request.project_name)\
@@ -171,18 +150,13 @@ def patch_datasets_by_id_or_name(dataset_id:int=None, dataset_name:str=None):
                 req_by = user["email"]
                 kc_client = Keycloak(client=f"Request {req_by} - {dar[1]}")
                 kc_client.patch_resource(f"{ds.id}-{old_ds_name}", **update_args)
-        # Update catalogue and dictionaries
-        if cata_body:
-            Catalogue.update_or_create(cata_body, ds)
-
-        for d in dict_body:
-            Dictionary.update_or_create(d, ds)
     except:
         session.rollback()
         raise
 
     session.commit()
-    return Dataset.sanitized_dict(ds), HTTPStatus.ACCEPTED
+    return DatasetRead.model_validate(ds).model_dump(), HTTPStatus.ACCEPTED
+
 
 @bp.route('/<dataset_name>/catalogue', methods=['GET'])
 @bp.route('/<int:dataset_id>/catalogue', methods=['GET'])
@@ -198,7 +172,8 @@ def get_datasets_catalogue_by_id_or_name(dataset_id=None, dataset_name=None):
     cata = Catalogue.query.filter(Catalogue.dataset_id == dataset.id).one_or_none()
     if not cata:
         raise DBRecordNotFoundError(f"Dataset {dataset.name} has no catalogue.")
-    return cata.sanitized_dict(), HTTPStatus.OK
+    return CatalogueRead.model_validate(cata).model_dump(), HTTPStatus.OK
+
 
 @bp.route('/<dataset_name>/dictionaries', methods=['GET'])
 @bp.route('/<int:dataset_id>/dictionaries', methods=['GET'])
@@ -216,7 +191,7 @@ def get_datasets_dictionaries_by_id_or_name(dataset_id=None, dataset_name=None):
     if not dictionary:
         raise DBRecordNotFoundError(f"Dataset {dataset.name} has no dictionaries.")
 
-    return [dc.sanitized_dict() for dc in dictionary], HTTPStatus.OK
+    return [DictionaryRead.model_validate(dc).model_dump() for dc in dictionary], HTTPStatus.OK
 
 
 @bp.route('/<dataset_name>/dictionaries/<table_name>', methods=['GET'])
@@ -241,7 +216,8 @@ def get_datasets_dictionaries_table_by_id_or_name(table_name, dataset_id=None, d
             f"Dataset {dataset.name} has no dictionaries with table {table_name}."
         )
 
-    return [dc.sanitized_dict() for dc in dictionary], HTTPStatus.OK
+    return [DictionaryRead.model_validate(dc).model_dump() for dc in dictionary], HTTPStatus.OK
+
 
 @bp.route('/token_transfer', methods=['POST'])
 @audit
@@ -279,6 +255,7 @@ def post_transfer_token():
     except:
         session.rollback()
         raise
+
 
 @bp.route('/selection/beacon', methods=['POST'])
 @audit

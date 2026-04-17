@@ -4,7 +4,9 @@ from unittest.mock import Mock
 
 from app.helpers.exceptions import InvalidRequest
 from app.models.container import Container
+from app.schemas.containers import ContainerCreate
 from tests.fixtures.azure_cr_fixtures import *
+from app.helpers.settings import kc_settings
 
 
 @pytest.fixture(scope='function')
@@ -63,25 +65,24 @@ class TestGetContainers(ContainersMixin):
         )
         for im_format in valid_image_formats:
             container_body.update(im_format)
-            Container.validate(container_body)
+            ContainerCreate(**container_body)
 
         for im_format in invalid_image_formats:
             container_body["name"] = im_format
             with pytest.raises(InvalidRequest):
-                Container.validate(container_body)
+                ContainerCreate(**container_body)
 
     def test_get_all_images(
         self,
         client,
-        container
+        container,
+        post_json_admin_header
     ):
         """
         Basic test for returning a correct response body
         on /GET /containers
         """
-        resp = client.get(
-            "/containers"
-        )
+        resp = client.get("/containers", headers=post_json_admin_header)
 
         assert resp.json["items"] == [self.get_container_as_response(container)]
 
@@ -207,7 +208,7 @@ class TestPostContainers(ContainersMixin):
             headers=post_json_admin_header
         )
         assert resp.status_code == 409
-        assert resp.json["error"] == f'Image {container.name}:{container.tag} already exists in registry {registry.url}'
+        assert resp.json["error"] == f'Image {container.name}:{container.tag} already exists in the registry'
 
     def test_add_new_container_missing_field(
         self,
@@ -309,7 +310,7 @@ class TestPatchContainers:
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json["error"] == "Either `ml` or `dashboard` field must be provided"
+        assert resp.json["error"] == "No valid changes detected"
 
     def test_patch_container_non_existing_container(
         self,
@@ -366,8 +367,16 @@ class TestSync:
             "/containers/sync",
             headers=post_json_admin_header
         )
-        expected_resp = [f"{registry.url}/{im}:{t}" for im in expected_image_names for t in expected_tags_list]
-        expected_resp += [f"{registry.url}/{im}@{expected_digest_list}" for im in expected_image_names]
+        expected_resp = [
+            'acr.azurecr.io/testimage:1.2.3',
+            'acr.azurecr.io/testimage:dev',
+            'acr.azurecr.io/testimage:latest',
+            'acr.azurecr.io/example:1.2.3',
+            'acr.azurecr.io/example:dev',
+            # 'acr.azurecr.io/example:latest', This is already present and not synched
+            'acr.azurecr.io/testimage@sha256:c1e51a68c68a448a',
+            'acr.azurecr.io/example@sha256:c1e51a68c68a448a'
+        ]
         assert resp.status_code == 201
         assert sorted(resp.json["images"]) == sorted(expected_resp)
 
@@ -384,7 +393,7 @@ class TestSync:
         during the process no images are synched up
         """
         with responses.RequestsMock() as rsps:
-            rsps.add_passthru(KEYCLOAK_URL)
+            rsps.add_passthru(kc_settings.keycloak_url)
             rsps.add(
                 responses.GET,
                 f"https://{cr_name}/oauth2/token?service={cr_name}&scope=registry:catalog:*",

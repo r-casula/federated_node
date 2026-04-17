@@ -1,5 +1,3 @@
-import responses
-from responses import matchers
 from datetime import datetime
 from kubernetes.client.exceptions import ApiException
 
@@ -9,7 +7,6 @@ from pytest import fixture
 from copy import deepcopy
 from unittest.mock import Mock
 
-from app.helpers.keycloak import URLS
 from app.models.task import Task
 
 
@@ -88,7 +85,7 @@ def terminated_state():
 @fixture
 def results_job_mock(mocker, task_body, reg_k8s_client):
     mocker.patch(
-        'app.models.task.Task.get_status',
+        'app.models.task.Task.status',
         return_value={"running": {}}
     )
     mocker.patch('app.models.task.uuid4', return_value="1dc6c6d1-417f-409a-8f85-cb9d20f7c741")
@@ -106,6 +103,7 @@ def results_job_mock(mocker, task_body, reg_k8s_client):
 def task_mock(dataset, user_uuid, container):
     task = Task(
         name="Test Task",
+        executors=[],
         docker_image=container.full_image_name(),
         description="something",
         requested_by=user_uuid,
@@ -153,9 +151,9 @@ def k8s_crd_404():
 
 @fixture
 def set_task_review_env(mocker):
-    mocker.patch('app.models.task.TASK_REVIEW', return_value="enabled")
-    mocker.patch('app.tasks_api.TASK_REVIEW', return_value="enabled")
+    mocker.patch('app.models.task.settings.task_review', return_value="enabled")
+    mocker.patch('app.tasks_api.settings.task_review', return_value="enabled")
 
 @fixture
 def set_task_controller_env(mocker):
-    mocker.patch('app.models.task.TASK_CONTROLLER', return_value="enabled")
+    mocker.patch('app.models.task.settings.task_controller', return_value="enabled")

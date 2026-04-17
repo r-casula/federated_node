@@ -1,13 +1,11 @@
-import base64
-import json
 import pytest
 import responses
 from unittest.mock import Mock
 
-from app.helpers.keycloak import KEYCLOAK_URL
 from app.helpers.container_registries import AzureRegistry
 from app.models.container import Container
 from app.models.registry import Registry
+from app.helpers.settings import kc_settings
 
 
 @pytest.fixture
@@ -20,7 +18,7 @@ def expected_image_names(container):
 
 @pytest.fixture
 def expected_tags_list():
-    return ["1.2.3", "dev"]
+    return ["1.2.3", "dev", "latest"]
 
 @pytest.fixture
 def expected_digest_list():
@@ -39,7 +37,7 @@ def registry_client(mocker):
 @pytest.fixture
 def azure_login_request(cr_name):
     with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add_passthru(KEYCLOAK_URL)
+        rsps.add_passthru(kc_settings.keycloak_url)
         rsps.add(
             responses.GET,
             f"https://{cr_name}/oauth2/token?service={cr_name}&scope=registry:catalog:*",
@@ -111,20 +109,20 @@ def cr_class(mocker, cr_name):
 
 @pytest.fixture
 def registry(client, reg_k8s_client, k8s_client, cr_name, azure_login_request) -> Registry:
-    reg = Registry(cr_name, '', '')
+    reg = Registry(url=cr_name, username='', password='')
     reg.add()
     return reg
 
 @pytest.fixture
 def container(client, k8s_client, registry, image_name) -> Container:
     img, tag = image_name.split(':')
-    cont = Container(img, registry, tag, dashboard=True)
+    cont = Container(name=img, registry=registry, tag=tag, dashboard=True)
     cont.add()
     return cont
 
 @pytest.fixture
 def container_with_sha(client, k8s_client, registry, image_name, expected_digest_list) -> Container:
     img, _ = image_name.split(':')
-    cont = Container(img, registry, sha=expected_digest_list, dashboard=True)
+    cont = Container(name=img, registry=registry, sha=expected_digest_list, dashboard=True)
     cont.add()
     return cont

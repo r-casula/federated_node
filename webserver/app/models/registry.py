@@ -1,11 +1,10 @@
-import base64
 import json
 import logging
 import re
 from kubernetes.client.exceptions import ApiException
 from sqlalchemy import Column, Integer, String, Boolean
 
-from app.helpers.const import TASK_NAMESPACE
+from app.helpers.settings import settings
 from app.helpers.container_registries import AzureRegistry, BaseRegistry, DockerRegistry, GitHubRegistry
 from app.helpers.base_model import BaseModel, db
 from app.helpers.exceptions import ContainerRegistryException, InvalidRequest
@@ -23,43 +22,13 @@ class Registry(db.Model, BaseModel):
     needs_auth = Column(Boolean, default=True)
     active = Column(Boolean, default=True)
 
-    def __init__(
-            self,
-            url: str,
-            username: str,
-            password: str,
-            needs_auth:bool=True,
-            active:bool=True
-        ):
-        self.url = url
-        self.needs_auth = needs_auth
-        self.active = active
-        self.username = username
-        self.password = password
-
-    def sanitized_dict(self):
-        san_dict = super().sanitized_dict()
-        keys = list(san_dict.keys())
-        for k in keys:
-            if k not in self._get_fields_name():
-                san_dict.pop(k, None)
-        return san_dict
-
-    @classmethod
-    def validate(cls, data:dict):
-        data = super().validate(data)
-
-        # Test credentials
-        _class = cls(**data).get_registry_class()
-        _class.login()
-        return data
+    def __init__(self, **kwargs):
+        self.username = kwargs.pop("username", None)
+        self.password = kwargs.pop("password", None)
+        super().__init__(**kwargs)
 
     def _get_name(self):
         return re.sub('^http(s{,1})://', '', self.url)
-
-    def add(self, commit=True):
-        self.update_regcred()
-        super().add(commit)
 
     def update_regcred(self):
         """
@@ -75,16 +44,16 @@ class Registry(db.Model, BaseModel):
             key = "https://index.docker.io/v1/"
 
         try:
-            secret = v1.read_namespaced_secret(secret_name, TASK_NAMESPACE)
+            secret = v1.read_namespaced_secret(secret_name, settings.task_namespace)
         except ApiException as apie:
             if apie.status == 404:
                 v1.create_secret(
                     name=secret_name,
                     values={".dockerconfigjson": json.dumps({"auths" : {}})},
-                    namespaces=[TASK_NAMESPACE],
+                    namespaces=[settings.task_namespace],
                     type='kubernetes.io/dockerconfigjson'
                 )
-                secret = v1.read_namespaced_secret(secret_name, TASK_NAMESPACE)
+                secret = v1.read_namespaced_secret(secret_name, settings.task_namespace)
             else:
                 raise InvalidRequest("Something went wrong when creating registry secrets")
 
@@ -98,7 +67,7 @@ class Registry(db.Model, BaseModel):
             }
         }
         secret.data['.dockerconfigjson'] = v1.encode_secret_value(json.dumps(dockerjson))
-        v1.patch_namespaced_secret(namespace=TASK_NAMESPACE, name=secret_name, body=secret)
+        v1.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret)
 
     def _get_creds(self):
         if hasattr(self, "username") and hasattr(self, "password"):
@@ -140,7 +109,7 @@ class Registry(db.Model, BaseModel):
         Simply returns a list of strings of all available
             images (or repos) with their tags
         """
-        _class = self.get_registry_class()
+        _class: BaseRegistry = self.get_registry_class()
         return _class.list_repos()
 
     def delete(self, commit:bool=False):
@@ -148,48 +117,8 @@ class Registry(db.Model, BaseModel):
         super().delete(commit)
         v1 = KubernetesClient()
         try:
-            v1.delete_namespaced_secret(namespace=TASK_NAMESPACE, name=self.slugify_name())
+            v1.delete_namespaced_secret(namespace=settings.task_namespace, name=self.slugify_name())
         except ApiException as kae:
             session.rollback()
             logger.error("%s:\n\tDetails: %s", kae.reason, kae.body)
             raise ContainerRegistryException("Error while deleting entity")
-
-    def update(self, **kwargs) -> None:
-        """
-        Updates the instance with new values. These should be
-        already validated.
-        """
-        for key in kwargs.keys():
-            if key not in ["username", "password", "active"]:
-                raise InvalidRequest(f"Field {key} is not valid")
-
-        if kwargs.get("active") is not None:
-            self.query.filter(Registry.id == self.id).update(
-                {"active": kwargs.get("active")},
-                synchronize_session='evaluate'
-            )
-
-        if not(kwargs.get("username") or kwargs.get("password")):
-            return
-
-        # Get the credentials from the pull docker secret
-        v1 = KubernetesClient()
-        key = self.url
-        if isinstance(self.get_registry_class(), DockerRegistry):
-            key = "https://index.docker.io/v1/"
-        try:
-            regcred = v1.read_namespaced_secret(self.slugify_name(), namespace=TASK_NAMESPACE)
-            dockerjson = json.loads(v1.decode_secret_value(regcred.data['.dockerconfigjson']))
-            self.username = dockerjson['auths'][key]["username"]
-            self.password = dockerjson['auths'][key]["password"]
-
-            if kwargs.get("username"):
-                self.username = kwargs.get("username")
-
-            if kwargs.get("password"):
-                self.password = kwargs.get("password")
-
-            self.update_regcred()
-        except ApiException as apie:
-            logger.error("Reason: %s\nDetails: %s", apie.reason, apie.body)
-            raise InvalidRequest("Could not update credentials") from apie
