@@ -37,3 +37,8 @@ MEMORY_UNITS = {
     "m": 1000
 }
 TASK_POD_INPUTS_PATH = "/mnt/inputs"
+REVIEW_STATUS = {
+    True: "Approved Release",
+    False: "Blocked Release",
+    None: "Pending Review" if settings.task_review else "Reviews not active"
+}

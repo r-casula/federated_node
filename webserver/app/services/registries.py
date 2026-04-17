@@ -1,6 +1,7 @@
 import json
 import logging
-from kubernetes.client.exceptions import ApiException
+from kubernetes_asyncio.client.exceptions import ApiException
+from kubernetes_asyncio.client.models.v1_secret import V1Secret
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,16 +27,17 @@ class RegistryService:
         reg_data = data.model_dump()
 
         reg = Registry(**reg_data)
-        _class: BaseRegistry = reg.get_registry_class()
+        _class: BaseRegistry = await reg.get_registry_class()
         _class.login()
         try:
-            reg.update_regcred()
+            await reg.update_regcred()
             await reg.add(session, False)
             await session.commit()
         except:
             await session.rollback()
             raise
 
+        await session.refresh(reg)
         return reg
 
     @staticmethod
@@ -51,12 +53,12 @@ class RegistryService:
             return
 
         # Get the credentials from the pull docker secret
-        v1 = KubernetesClient()
+        v1: KubernetesClient = await KubernetesClient.create()
         key = registry.url
-        if isinstance(registry.get_registry_class(), DockerRegistry):
+        if isinstance(await registry.get_registry_class(), DockerRegistry):
             key = "https://index.docker.io/v1/"
         try:
-            regcred = v1.read_namespaced_secret(
+            regcred: V1Secret = await v1.api_client.read_namespaced_secret(
                 registry.slugify_name(), namespace=settings.task_namespace
             )
             dockerjson = json.loads(
@@ -71,7 +73,7 @@ class RegistryService:
             if data.password:
                 registry.password = data.password
 
-            registry.update_regcred()
+            await registry.update_regcred()
         except ApiException as apie:
             logger.error("Reason: %s\nDetails: %s", apie.reason, apie.body)
             raise InvalidRequest("Could not update credentials") from apie

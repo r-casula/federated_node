@@ -3,8 +3,6 @@ from typing import Optional
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.helpers.exceptions import InvalidRequest
-from app.models.container import Container
-from app.models.task import Task
 
 
 class ContainerBase(BaseModel):
