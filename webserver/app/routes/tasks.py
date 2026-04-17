@@ -36,7 +36,7 @@ from app.services.tasks import TaskService
 router = APIRouter(tags=["tasks"], prefix="/tasks")
 
 
-async def does_user_own_task(task:Task):
+async def does_user_own_task(task:Task, request: Request):
     """
     Simple wrapper to check if the user is the one who
     triggered the task, or is admin.
@@ -44,7 +44,7 @@ async def does_user_own_task(task:Task):
     If they don't, an exception is raised with 403 status code
     """
     kc_client = Keycloak()
-    token = kc_client.get_token_from_headers()
+    token = kc_client.get_token_from_headers(request)
     dec_token = kc_client.decode_token(token)
     user_id = kc_client.get_user_by_email(dec_token["email"])["id"]
 
@@ -90,7 +90,7 @@ async def get_task_id(
     """
     task = Task.get_by_id(session, task_id)
 
-    await does_user_own_task(task)
+    await does_user_own_task(task, request)
 
     return TaskRead.model_validate(task).model_dump()
 
@@ -109,7 +109,7 @@ async def cancel_tasks(
     if not task:
         raise DBRecordNotFoundError("Task not found")
 
-    await does_user_own_task(task)
+    await does_user_own_task(task, request)
 
     # Should remove pod/stop ML pipeline
     task.terminate_pod()
@@ -172,10 +172,10 @@ async def get_task_results(
     if task is None:
         raise DBRecordNotFoundError(f"Task with id {task_id} does not exist")
 
-    await does_user_own_task(task)
+    await does_user_own_task(task, request)
 
     kc_client = Keycloak()
-    token = kc_client.get_token_from_headers()
+    token = kc_client.get_token_from_headers(request)
     # admin should be able to fetch them regardless
     if settings.task_review and not task.review_status and not kc_client.is_user_admin(token):
         return JSONResponse(
@@ -207,7 +207,7 @@ async def get_tasks_logs(
     if task is None:
         raise DBRecordNotFoundError(f"Task with id {task_id} does not exist")
 
-    await does_user_own_task(task)
+    await does_user_own_task(task, request)
 
     return {"logs": task.get_logs()}
 

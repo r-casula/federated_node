@@ -150,14 +150,14 @@ class RequestModel(BaseModel):
 
             logger.info("Updating DB")
             self.update(
-                session, dict(status=self.STATUSES["approved"], requested_by=user["id"])
+                session, {"status": self.STATUSES['approved'], "requested_by": user['id']}
             )
             session.commit()
         except IntegrityError as exc:
             session.rollback()
             raise DBError(f"Failed to approve request {self.id}") from exc
         except LogAndException as exc:
-            self.delete(commit=True)
+            self.delete(session, commit=True)
             raise exc
 
         return ret_response

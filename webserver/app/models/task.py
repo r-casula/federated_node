@@ -3,12 +3,12 @@ import json
 import re
 from datetime import datetime, timedelta
 from typing import Self, Tuple
+from uuid import uuid4
 from kubernetes.client import V1CustomResourceDefinition
 from kubernetes.client.exceptions import ApiException
 from sqlalchemy import Integer, DateTime, Select, String, ForeignKey, Boolean, select
 from sqlalchemy.orm import Mapped, Session, joinedload, relationship, mapped_column
 from sqlalchemy.sql import func
-from uuid import uuid4
 
 import urllib3
 from app.helpers.const import (
@@ -66,7 +66,7 @@ class Task(BaseModel):
         super().__init__(**kwargs)
 
     @classmethod
-    def get_by_id(cls, session:Session, id: int) -> Self:
+    def get_by_id(cls, session:Session, id: int) -> Self | None:
         q = select(cls).options(joinedload(cls.dataset)).where(cls.id == id)
         return session.execute(q).scalars().one_or_none()
 
@@ -178,7 +178,7 @@ class Task(BaseModel):
             Container.name==image_name,
             Registry.url == registry,
         ).where(
-            (((Container.tag==tag) & (Container.tag != None)) | ((Container.sha==sha) & (Container.sha != None)))
+            (((Container.tag==tag) & (Container.tag is not None)) | ((Container.sha==sha) & (Container.sha is not None)))
         ).join(Registry)
         image = session.execute(q).scalars().one_or_none()
 

@@ -1,7 +1,7 @@
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, Any, List
 from kubernetes.client.exceptions import ApiException
 from sqlalchemy import Integer, String, Boolean
 from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
@@ -81,7 +81,7 @@ class Registry(BaseModel):
         secret.data['.dockerconfigjson'] = v1.encode_secret_value(json.dumps(dockerjson))
         v1.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret)
 
-    def _get_creds(self):
+    def _get_creds(self) -> dict[str, Any] | None:
         if hasattr(self, "username") and hasattr(self, "password"):
             return {"user": self.username, "token": self.password}
 
