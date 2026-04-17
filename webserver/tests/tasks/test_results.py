@@ -1,5 +1,6 @@
 from datetime import timedelta
 from kubernetes.client.exceptions import ApiException
+from sqlalchemy import update
 from tests.fixtures.azure_cr_fixtures import *
 from tests.fixtures.tasks_fixtures import *
 from app.helpers.keycloak import Keycloak
@@ -25,7 +26,7 @@ class TestTaskResults:
             headers=simple_admin_header
         )
         assert response.status_code == 200
-        assert response.content_type == "application/zip"
+        assert response.headers["content-type"] == "application/zip"
 
     def test_get_results_job_creation_failure(
         self,
@@ -49,10 +50,11 @@ class TestTaskResults:
             headers=simple_admin_header
         )
         assert response.status_code == 400
-        assert response.json["error"] == 'Failed to run pod: Something went wrong'
+        assert response.json()["error"] == 'Failed to run pod: Something went wrong'
 
     def test_results_not_found_with_expired_date(
         self,
+        db_session,
         simple_admin_header,
         client,
         task_mock
@@ -61,13 +63,19 @@ class TestTaskResults:
         A task result are being deleted after a declared number of days.
         This test makes sure an error is returned as expected
         """
-        task_mock.created_at -= timedelta(days=settings.cleanup_after_days)
+        with db_session:
+            db_session.execute(
+                update(Task).
+                where(Task.id == task_mock.id).
+                values({"created_at": task_mock.created_at - timedelta(days=settings.cleanup_after_days)})
+            )
+
         response = client.get(
             f'/tasks/{task_mock.id}/results',
             headers=simple_admin_header
         )
         assert response.status_code == 500
-        assert response.json["error"] == 'Tasks results are not available anymore. Please, run the task again'
+        assert response.json()["error"] == 'Tasks results are not available anymore. Please, run the task again'
 
 
 class TestResultsReview:
@@ -87,7 +95,7 @@ class TestResultsReview:
             headers=simple_admin_header
         )
         assert response.status_code == 200
-        assert response.json["review"] == "Pending Review"
+        assert response.json()["review"] == "Pending Review"
 
     def test_review_approved(
         self,
@@ -164,7 +172,7 @@ class TestResultsReview:
             headers=simple_admin_header
         )
         assert response.status_code == 200
-        assert response.content_type == "application/zip"
+        assert response.headers["content-type"] == "application/zip"
 
     def test_default_review_pending(
         self,
@@ -186,7 +194,7 @@ class TestResultsReview:
             headers=simple_user_header
         )
         assert response.status_code == 400
-        assert response.json["status"] == "Pending Review"
+        assert response.json()["status"] == "Pending Review"
 
     def test_review_blocked(
         self,
@@ -230,7 +238,7 @@ class TestResultsReview:
             headers=simple_user_header
         )
         assert response.status_code == 400
-        assert response.json["status"] == "Blocked Release"
+        assert response.json()["status"] == "Blocked Release"
 
     def test_review_task_not_found(
         self,
@@ -247,7 +255,7 @@ class TestResultsReview:
             headers=simple_user_header
         )
         assert response.status_code == 404
-        assert response.json["error"] == f"Task with id {task_mock.id + 1} does not exist"
+        assert response.json()["error"] == f"Task with id {task_mock.id + 1} does not exist"
 
     def test_review_twice(
         self,
@@ -283,7 +291,7 @@ class TestResultsReview:
             headers=simple_admin_header
         )
         assert response.status_code == 400
-        assert response.json['error'] == "Task has been already reviewed"
+        assert response.json()['error'] == "Task has been already reviewed"
 
     def test_review_crd_patch_error(
         self,
@@ -311,7 +319,7 @@ class TestResultsReview:
         assert response.status_code == 500
         v1_crd_mock.return_value.patch_cluster_custom_object.assert_called()
 
-        assert response.json['error'] == "Could not activate automatic delivery"
+        assert response.json()['error'] == "Could not activate automatic delivery"
 
     def test_review_crd_not_found(
         self,
@@ -351,4 +359,4 @@ class TestResultsReview:
                 headers=simple_admin_header
             )
             assert response.status_code == 400
-            assert response.json['error'] == "The Task Review feature is not available on this Federated Node"
+            assert response.json()['error'] == "The Task Review feature is not available on this Federated Node"

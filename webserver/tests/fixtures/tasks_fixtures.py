@@ -11,7 +11,7 @@ from app.models.task import Task
 
 
 @fixture(scope='function')
-def task_body(dataset, container):
+def task_body(db_session, dataset, container):
     return deepcopy({
         "name": "Test Task",
         "requested_by": "das9908-as098080c-9a80s9",
@@ -100,17 +100,17 @@ def results_job_mock(mocker, task_body, reg_k8s_client):
     return pod_mock
 
 @fixture
-def task_mock(dataset, user_uuid, container):
+def task_mock(dataset, user_uuid, container, db_session):
     task = Task(
         name="Test Task",
         executors=[],
         docker_image=container.full_image_name(),
         description="something",
         requested_by=user_uuid,
-        dataset=dataset,
+        dataset_id=dataset.id,
         created_at=datetime.now()
     )
-    task.add()
+    task.add(db_session)
     return task
 
 @fixture
@@ -151,8 +151,7 @@ def k8s_crd_404():
 
 @fixture
 def set_task_review_env(mocker):
-    mocker.patch('app.models.task.settings.task_review', return_value="enabled")
-    mocker.patch('app.tasks_api.settings.task_review', return_value="enabled")
+    mocker.patch('app.routes.tasks.settings.task_review', return_value="enabled")
 
 @fixture
 def set_task_controller_env(mocker):

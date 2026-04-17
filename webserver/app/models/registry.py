@@ -1,26 +1,40 @@
 import json
 import logging
 import re
+from typing import TYPE_CHECKING, Any, List
 from kubernetes.client.exceptions import ApiException
-from sqlalchemy import Column, Integer, String, Boolean
+from sqlalchemy import Integer, String, Boolean
+from sqlalchemy.orm import Mapped, Session, mapped_column, relationship
+from sqlalchemy.orm.properties import MappedColumn
 
 from app.helpers.settings import settings
-from app.helpers.container_registries import AzureRegistry, BaseRegistry, DockerRegistry, GitHubRegistry
-from app.helpers.base_model import BaseModel, db
+from app.helpers.container_registries import (
+    AzureRegistry, BaseRegistry, DockerRegistry, GitHubRegistry
+)
+from app.helpers.base_model import BaseModel
 from app.helpers.exceptions import ContainerRegistryException, InvalidRequest
 from app.helpers.kubernetes import KubernetesClient
+
+if TYPE_CHECKING:
+    from .container import Container
 
 logger = logging.getLogger("registry_model")
 logger.setLevel(logging.INFO)
 
 
-class Registry(db.Model, BaseModel):
+class Registry(BaseModel):# pylint: disable=missing-class-docstring
     __tablename__ = 'registries'
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    url = Column(String(256), nullable=False)
-    needs_auth = Column(Boolean, default=True)
-    active = Column(Boolean, default=True)
+    id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    url: MappedColumn[str] = mapped_column(String(256), nullable=False)
+    needs_auth: MappedColumn[bool] = mapped_column(Boolean, default=True)
+    active: MappedColumn[bool] = mapped_column(Boolean, default=True)
+
+    containers: Mapped[List["Container"]] = relationship(
+        "Container",
+        back_populates="registry",
+        cascade="all, delete-orphan"
+    )
 
     def __init__(self, **kwargs):
         self.username = kwargs.pop("username", None)
@@ -37,7 +51,7 @@ class Registry(db.Model, BaseModel):
         """
         v1 = KubernetesClient()
         secret_name:str = self.slugify_name()
-        dockerjson = dict()
+        dockerjson = {}
 
         key = self.url
         if isinstance(self.get_registry_class(), DockerRegistry):
@@ -55,7 +69,9 @@ class Registry(db.Model, BaseModel):
                 )
                 secret = v1.read_namespaced_secret(secret_name, settings.task_namespace)
             else:
-                raise InvalidRequest("Something went wrong when creating registry secrets")
+                raise InvalidRequest(
+                    "Something went wrong when creating registry secrets"
+                ) from apie
 
         dockerjson = json.loads(v1.decode_secret_value(secret.data['.dockerconfigjson']))
         dockerjson['auths'] = {
@@ -69,9 +85,11 @@ class Registry(db.Model, BaseModel):
         secret.data['.dockerconfigjson'] = v1.encode_secret_value(json.dumps(dockerjson))
         v1.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret)
 
-    def _get_creds(self):
+    def _get_creds(self) -> dict[str, Any] | None:
+        """Private method to return a dict of credentials"""
         if hasattr(self, "username") and hasattr(self, "password"):
             return {"user": self.username, "token": self.password}
+        return None
 
     def slugify_name(self) -> str:
         """
@@ -112,13 +130,13 @@ class Registry(db.Model, BaseModel):
         _class: BaseRegistry = self.get_registry_class()
         return _class.list_repos()
 
-    def delete(self, commit:bool=False):
-        session = db.session
-        super().delete(commit)
+    def delete(self, session: Session, _commit:bool=True):
+        nested = session.begin_nested()
+        super().delete(session, False)
         v1 = KubernetesClient()
         try:
             v1.delete_namespaced_secret(namespace=settings.task_namespace, name=self.slugify_name())
-        except ApiException as kae:
-            session.rollback()
-            logger.error("%s:\n\tDetails: %s", kae.reason, kae.body)
-            raise ContainerRegistryException("Error while deleting entity")
+        except ApiException as apie:
+            nested.rollback()
+            logger.error("%s:\n\tDetails: %s", apie.reason, apie.body)
+            raise ContainerRegistryException("Error while deleting entity") from apie

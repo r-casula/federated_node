@@ -2,40 +2,34 @@ import os
 import json
 import os
 from kubernetes.client.exceptions import ApiException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from unittest import mock
 from sqlalchemy.exc import ProgrammingError, OperationalError
 from unittest import mock
 from unittest.mock import Mock
 
-from app.helpers.base_model import db
 from app.helpers.exceptions import KeycloakError
 from app.models.dataset import Dataset
 from app.models.catalogue import Catalogue
 from app.models.dictionary import Dictionary
-from app.models.request import Request
+from app.models.request import RequestModel
 from tests.conftest import sample_ds_body
 from app.helpers.exceptions import KeycloakError
+from tests.base_test_class import BaseTest
 
 missing_dict_cata_message = {"error": "Missing field. Make sure \"catalogue\" and \"dictionaries\" entries are there"}
 
 
-class MixinTestDataset:
+class MixinTestDataset(BaseTest):
     expected_namespaces = [os.getenv("DEFAULT_NAMESPACE"), os.getenv("TASK_NAMESPACE")]
     hostname = os.getenv("PUBLIC_URL")
-
-    def run_query(self, query):
-        """
-        Helper to run query through the ORM
-        """
-        return db.session.execute(query).all()
 
     def assert_datasets_by_name(self, dataset_name:str, count:int = 1):
         """
         Just to reduce duplicate code, use the ILIKE operator
         on the query to match case insensitive datasets name
         """
-        assert Dataset.query.filter(Dataset.name.ilike(dataset_name)).count() == count
+        assert self.run_query(select(func.count(Dataset.id)).filter(Dataset.name.ilike(dataset_name)), "one") == count
 
     def post_dataset(
             self,
@@ -49,12 +43,12 @@ class MixinTestDataset:
         uses dataset_post_body
         """
         response = client.post(
-            "/datasets/",
-            data=json.dumps(data_body),
+            "/datasets",
+            json=data_body,
             headers=headers
         )
-        assert response.status_code == code, response.data.decode()
-        return response.json
+        assert response.status_code == code, response.text
+        return response.json()
 
 
 class TestDatasets(MixinTestDataset):
@@ -82,10 +76,10 @@ class TestDatasets(MixinTestDataset):
         """
         Get all dataset is possible only for admin users
         """
-        response = client.get("/datasets/", headers=simple_admin_header)
+        response = client.get("/datasets", headers=simple_admin_header)
 
         assert response.status_code == 200
-        assert response.json["items"] == [self.expected_ds_entry(dataset)]
+        assert response.json()["items"] == [self.expected_ds_entry(dataset)]
 
     def test_get_url_returned_in_dataset_list_is_valid(
             self,
@@ -98,7 +92,7 @@ class TestDatasets(MixinTestDataset):
         """
         response = client.get(dataset.url, headers=simple_admin_header)
         assert response.status_code == 200
-        assert response.json == self.expected_ds_entry(dataset)
+        assert response.json() == self.expected_ds_entry(dataset)
 
     def test_get_all_datasets_no_token(
             self,
@@ -107,8 +101,8 @@ class TestDatasets(MixinTestDataset):
         """
         Get all dataset fails if no token is provided
         """
-        response = client.get("/datasets/")
-        assert response.status_code == 401
+        response = client.get("/datasets")
+        assert response.status_code == 401, response.json()
 
     def test_get_all_datasets_does_not_fail_for_non_admin(
             self,
@@ -119,7 +113,7 @@ class TestDatasets(MixinTestDataset):
         """
         Get all dataset is possible for non-admin users
         """
-        response = client.get("/datasets/", headers=simple_user_header)
+        response = client.get("/datasets", headers=simple_user_header)
         assert response.status_code == 200
 
     def test_get_dataset_by_id_200(
@@ -133,7 +127,7 @@ class TestDatasets(MixinTestDataset):
         """
         response = client.get(f"/datasets/{dataset.id}", headers=simple_admin_header)
         assert response.status_code == 200
-        assert response.json == self.expected_ds_entry(dataset)
+        assert response.json() == self.expected_ds_entry(dataset)
 
     def test_get_dataset_by_id_403(
             self,
@@ -147,7 +141,7 @@ class TestDatasets(MixinTestDataset):
         """
         mock_kc_client["wrappers_kc"].return_value.is_token_valid.return_value = False
         response = client.get(f"/datasets/{dataset.id}", headers=simple_user_header)
-        assert response.status_code == 403, response.json
+        assert response.status_code == 403, response.json()
 
     def test_get_dataset_by_id_project_not_valid(
             self,
@@ -165,9 +159,9 @@ class TestDatasets(MixinTestDataset):
         header["project-name"] = "test project"
         response = client.get(f"/datasets/{dataset.id}", headers=header)
         assert response.status_code == 400
-        assert response.json == {"error": "Could not find project"}
+        assert response.json() == {"error": "Could not find project"}
 
-    @mock.patch('app.datasets_api.Request.approve', return_value={"token": "token"})
+    @mock.patch('app.routes.datasets.RequestModel.approve', return_value={"token": "token"})
     def test_get_dataset_by_id_project_approved(
             self,
             req_approve_mock,
@@ -183,16 +177,16 @@ class TestDatasets(MixinTestDataset):
         """
         response = client.post(
             "/datasets/token_transfer",
-            data=json.dumps(request_base_body),
+            json=request_base_body,
             headers=post_json_admin_header
         )
         assert response.status_code == 201
-        assert "token" in response.json
+        assert "token" in response.json()
 
-        token = response.json["token"]
-        req = Request.query.filter(
-            Request.project_name == request_base_body["project_name"]
-        ).one_or_none()
+        token = response.json()["token"]
+        req = self.run_query(select(RequestModel).where(
+            RequestModel.project_name == request_base_body["project_name"]
+        ), "one")
         mock_kc_client["wrappers_kc"].return_value.get_user_by_username.return_value = {"id": user_uuid}
         req.requested_by = user_uuid
 
@@ -200,10 +194,10 @@ class TestDatasets(MixinTestDataset):
             "Authorization": f"Bearer {token}",
             "project-name": request_base_body["project_name"]
         })
-        assert response.status_code == 200, response.json
-        assert response.json == self.expected_ds_entry(dataset)
+        assert response.status_code == 200, response.json()
+        assert response.json() == self.expected_ds_entry(dataset)
 
-    @mock.patch('app.datasets_api.Request.approve', return_value={"token": "somejwttoken"})
+    @mock.patch('app.routes.datasets.RequestModel.approve', return_value={"token": "somejwttoken"})
     def test_get_dataset_by_id_project_non_approved(
             self,
             req_mock,
@@ -223,16 +217,16 @@ class TestDatasets(MixinTestDataset):
             headers=post_json_admin_header
         )
         assert response.status_code == 201
-        assert list(response.json.keys()) == ["token"]
+        assert list(response.json().keys()) == ["token"]
 
-        token = response.json["token"]
+        token = response.json()["token"]
         mock_kc_client["wrappers_kc"].return_value.is_user_admin.return_value = False
         response = client.get(f"/datasets/{dataset.id}", headers={
             "Authorization": f"Bearer {token}",
             "project-name": "test project"
         })
         assert response.status_code == 400
-        assert response.json == {"error": "User does not belong to a valid project"}
+        assert response.json() == {"error": "User does not belong to a valid project"}
 
     def test_get_dataset_by_id_404(
             self,
@@ -257,8 +251,8 @@ class TestDatasets(MixinTestDataset):
         /datasets/{name} GET returns a valid list
         """
         response = client.get(f"/datasets/{dataset.name}", headers=simple_admin_header)
-        assert response.status_code == 200, response.json
-        assert response.json == self.expected_ds_entry(dataset)
+        assert response.status_code == 200, response.json()
+        assert response.json() == self.expected_ds_entry(dataset)
 
     def test_get_dataset_by_name_404(
             self,
@@ -271,7 +265,7 @@ class TestDatasets(MixinTestDataset):
         """
         response = client.get("/datasets/anothername", headers=simple_admin_header)
         assert response.status_code == 404
-        assert response.json == {"error": "Dataset anothername does not exist"}
+        assert response.json() == {"error": "Dataset anothername does not exist"}
 
 
 class TestPostDataset(MixinTestDataset):
@@ -291,12 +285,12 @@ class TestPostDataset(MixinTestDataset):
 
         self.assert_datasets_by_name(data_body['name'])
 
-        query = self.run_query(select(Catalogue).where(Catalogue.title == data_body["catalogue"]["title"]))
-        assert len(query)== 1
+        query = self.run_query(select(func.count(Catalogue.id)).where(Catalogue.title == data_body["catalogue"]["title"]), "one")
+        assert query == 1
 
         for d in data_body["dictionaries"]:
-            query = self.run_query(select(Dictionary).where(Dictionary.table_name == d["table_name"]))
-            assert len(query)== 1
+            query = self.run_query(select(func.count(Dictionary.id)).where(Dictionary.table_name == d["table_name"]), "one")
+            assert query == 1
 
     def test_post_dataset_fails_with_same_name_case_sensitive(
             self,
@@ -310,7 +304,7 @@ class TestPostDataset(MixinTestDataset):
         """
         data_body = dataset_post_body.copy()
         data_body['name'] = data_body['name'].upper()
-        self.post_dataset(client, post_json_admin_header, data_body, 500)
+        self.post_dataset(client, post_json_admin_header, data_body, 400)
 
         self.assert_datasets_by_name(data_body['name'])
 
@@ -334,7 +328,7 @@ class TestPostDataset(MixinTestDataset):
 
         response = client.get("/datasets/" + data_body['name'], headers=simple_admin_header)
         assert response.status_code == 200
-        assert response.json == {
+        assert response.json() == {
             "id": new_ds["id"],
             "name": "test dataset",
             "host": data_body["host"],
@@ -364,8 +358,8 @@ class TestPostDataset(MixinTestDataset):
         data_body['type'] = 'mssql'
         self.post_dataset(client, post_json_admin_header, data_body)
 
-        query = self.run_query(select(Dataset).where(Dataset.name == data_body["name"].lower(), Dataset.type == "mssql"))
-        assert len(query) == 1
+        query = self.run_query(select(func.count(Dataset.id)).where(Dataset.name == data_body["name"].lower(), Dataset.type == "mssql"), "one")
+        assert query == 1
 
     def test_post_dataset_with_extra_args(
             self,
@@ -383,11 +377,12 @@ class TestPostDataset(MixinTestDataset):
         data_body['extra_connection_args'] = 'read_only=true'
         self.post_dataset(client, post_json_admin_header, data_body)
 
-        ds = Dataset.query.filter(
-            Dataset.name == data_body["name"].lower(),
-            Dataset.extra_connection_args == data_body['extra_connection_args']
-        ).one_or_none()
-        assert ds is not None
+        assert self.run_query(
+            select(func.count(Dataset.id)).filter_by(
+                name=data_body["name"].lower(),
+                extra_connection_args=data_body['extra_connection_args']
+            )
+        , "one") > 0
 
     def test_post_dataset_with_existing_repo_linked(
             self,
@@ -404,12 +399,11 @@ class TestPostDataset(MixinTestDataset):
         data_body['name'] = 'TestDs78'
         data_body['repository'] = dataset_with_repo.repository
         resp = self.post_dataset(client, post_json_admin_header, data_body, 400)
-        assert resp["error"][0]["message"] == "Value error, Repository is already linked to another dataset. Please PATCH that dataset with repository: null"
+        assert resp["error"] == "Repository is already linked to another dataset. Please PATCH that dataset with repository: null"
 
-        ds = Dataset.query.filter(
-            Dataset.repository == dataset_with_repo.repository
-        ).one_or_none()
-        assert ds is not None
+        assert self.run_query(
+            select(func.count(Dataset.id)).filter_by(repository=dataset_with_repo.repository)
+        , "one") > 0
 
     def test_post_dataset_invalid_type(
             self,
@@ -428,8 +422,8 @@ class TestPostDataset(MixinTestDataset):
         resp = self.post_dataset(client, post_json_admin_header, data_body, code=400)
         assert resp["error"][0]["message"] == "Value error, DB type invalid is not supported."
 
-        query = self.run_query(select(Dataset).where(Dataset.name == data_body["name"], Dataset.type == "mssql"))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Dataset.id)).where(Dataset.name == data_body["name"], Dataset.type == "mssql"), "one")
+        assert query == 0
 
     def test_post_dataset_fails_k8s_secrets(
             self,
@@ -454,8 +448,8 @@ class TestPostDataset(MixinTestDataset):
         data_body['name'] = 'TestDs78'
         self.post_dataset(client, post_json_admin_header, data_body, 500)
 
-        query = self.run_query(select(Dataset).where(Dataset.name == data_body["name"]))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Dataset.id)).filter_by(name=data_body["name"]), "one")
+        assert query == 0
 
         self.assert_datasets_by_name(data_body['name'], count=0)
 
@@ -500,17 +494,16 @@ class TestPostDataset(MixinTestDataset):
         data_body['name'] = 'TestDs78'
         self.post_dataset(client, post_json_user_header, data_body, 403)
 
-        query = self.run_query(select(Dataset).where(Dataset.name == data_body["name"]))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Dataset.id)).where(Dataset.name == data_body["name"]), "one")
+        assert query == 0
         self.assert_datasets_by_name(data_body['name'], count=0)
 
-        query = self.run_query(select(Catalogue).where(Catalogue.title == data_body["catalogue"]["title"]))
-        assert len(query)== 0
-
+        query = self.run_query(select(func.count(Catalogue.id)).where(Catalogue.title == data_body["catalogue"]["title"]), "one")
+        assert query == 0
 
         for d in data_body["dictionaries"]:
-            query = self.run_query(select(Dictionary).where(Dictionary.table_name == d["table_name"]))
-            assert len(query)== 0
+            query = self.run_query(select(func.count(Dictionary.id)).where(Dictionary.table_name == d["table_name"]), "one")
+            assert query == 0
 
     def test_post_dataset_with_duplicate_dictionaries_fails(
             self,
@@ -531,8 +524,8 @@ class TestPostDataset(MixinTestDataset):
         assert response == {'error': 'Record already exists'}
 
         # Make sure any db entry is created
-        query = self.run_query(select(Dataset).where(Dataset.name == data_body["name"]))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Dataset.id)).where(Dataset.name == data_body["name"]), "one")
+        assert query == 0
         self.assert_datasets_by_name(data_body['name'], count=0)
 
     def test_post_dataset_with_empty_dictionaries_succeeds(
@@ -552,10 +545,10 @@ class TestPostDataset(MixinTestDataset):
 
         # Make sure any db entry is created
         self.assert_datasets_by_name(data_body['name'])
-        query = self.run_query(select(Catalogue).where(Catalogue.title == data_body["catalogue"]["title"]))
-        assert len(query) == 1
-        query = self.run_query(select(Dictionary).where(Dictionary.dataset_id == query_ds["id"]))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Catalogue.id)).where(Catalogue.title == data_body["catalogue"]["title"]), "one")
+        assert query == 1
+        query = self.run_query(select(func.count(Dictionary.id)).where(Dictionary.dataset_id == query_ds["id"]), "one")
+        assert query == 0
 
     def test_post_dataset_with_wrong_dictionaries_format(
             self,
@@ -577,14 +570,14 @@ class TestPostDataset(MixinTestDataset):
         assert response["error"][0]["message"] == "Input should be a valid list"
 
         # Make sure any db entry is created
-        query = self.run_query(select(Dataset).where(Dataset.name == data_body["name"]))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Dataset.id)).where(Dataset.name == data_body["name"]), "one")
+        assert query == 0
         self.assert_datasets_by_name(data_body['name'], count=0)
 
-        query = self.run_query(select(Catalogue).where(Catalogue.title == data_body["catalogue"]["title"]))
-        assert len(query) == 0
-        query = self.run_query(select(Dictionary).where(Dictionary.table_name == data_body["dictionaries"]["table_name"]))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Catalogue.id)).where(Catalogue.title == data_body["catalogue"]["title"]), "one")
+        assert query == 0
+        query = self.run_query(select(func.count(Dictionary.id)).where(Dictionary.table_name == data_body["dictionaries"]["table_name"]), "one")
+        assert query == 0
 
     def test_post_datasets_with_same_dictionaries_succeeds(
             self,
@@ -603,12 +596,12 @@ class TestPostDataset(MixinTestDataset):
         # Make sure db entries are created
         self.assert_datasets_by_name(data_body['name'])
 
-        query = self.run_query(select(Catalogue).where(Catalogue.title == data_body["catalogue"]["title"]))
-        assert len(query) == 1
+        query = self.run_query(select(func.count(Catalogue.id)).where(Catalogue.title == data_body["catalogue"]["title"]), "one")
+        assert query == 1
 
         for d in data_body["dictionaries"]:
-            query = self.run_query(select(Dictionary).where(Dictionary.table_name == d["table_name"]))
-            assert len(query) == 1
+            query = self.run_query(select(func.count(Dictionary.id)).where(Dictionary.table_name == d["table_name"]), "one")
+            assert query == 1
 
         # Creating second DS
         data_body["name"] = "Another DS"
@@ -617,12 +610,12 @@ class TestPostDataset(MixinTestDataset):
         # Make sure any db entry is created
         self.assert_datasets_by_name(data_body['name'])
 
-        query = self.run_query(select(Catalogue).where(Catalogue.title == data_body["catalogue"]["title"]))
-        assert len(query) == 2
+        query = self.run_query(select(func.count(Catalogue.id)).where(Catalogue.title == data_body["catalogue"]["title"]), "one")
+        assert query == 2
 
         for d in data_body["dictionaries"]:
-            query = self.run_query(select(Dictionary).where(Dictionary.table_name == d["table_name"]))
-            assert len(query) == 2
+            query = self.run_query(select(func.count(Dictionary.id)).where(Dictionary.table_name == d["table_name"]), "one")
+            assert query == 2
 
     def test_post_dataset_with_catalogue_only(
             self,
@@ -641,10 +634,10 @@ class TestPostDataset(MixinTestDataset):
 
         # Make sure any db entry is created
         self.assert_datasets_by_name(data_body['name'])
-        query = self.run_query(select(Catalogue).where(Catalogue.title == data_body["catalogue"]["title"]))
-        assert len(query) == 1
-        query = self.run_query(select(Dictionary).where(Dictionary.dataset_id == query_ds["id"]))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Catalogue.id)).where(Catalogue.title == data_body["catalogue"]["title"]), "one")
+        assert query == 1
+        query = self.run_query(select(func.count(Dictionary.id)).where(Dictionary.dataset_id == query_ds["id"]), "one")
+        assert query == 0
 
     def test_post_dataset_with_dictionaries_only(
             self,
@@ -664,11 +657,11 @@ class TestPostDataset(MixinTestDataset):
         # Make sure any db entry is created
         self.assert_datasets_by_name(data_body['name'])
 
-        query = self.run_query(select(Catalogue).where(Catalogue.dataset_id == query_ds["id"]))
-        assert len(query) == 0
+        query = self.run_query(select(func.count(Catalogue.id)).where(Catalogue.dataset_id == query_ds["id"]), "one")
+        assert query == 0
         for d in data_body["dictionaries"]:
-            query = self.run_query(select(Dictionary).where(Dictionary.table_name == d["table_name"]))
-            assert len(query)== 1
+            query = self.run_query(select(func.count(Dictionary.id)).where(Dictionary.table_name == d["table_name"]), "one")
+            assert query== 1
 
 
 class TestPatchDataset(MixinTestDataset):
@@ -695,7 +688,7 @@ class TestPatchDataset(MixinTestDataset):
             headers=post_json_admin_header
         )
         assert response.status_code == 202
-        ds = Dataset.query.filter(Dataset.id == dataset.id).one_or_none()
+        ds: Dataset = self.run_query(select(Dataset).filter(Dataset.id == dataset.id), "one_or_none")
         assert ds.name == "new_name"
 
         expected_body = k8s_client["read_namespaced_secret_mock"].return_value
@@ -733,10 +726,10 @@ class TestPatchDataset(MixinTestDataset):
         """
         ds_old_name = dataset.name
         data_body = {"name": "new_name"}
-        expected_client = f'Request {dar_user} - {dataset.host}'
+        expected_client = f'RequestModel {dar_user} - {dataset.host}'
 
-        mock_kc_client["datasets_api_kc"].return_value.patch_resource.return_value = Mock()
-        mock_kc_client["datasets_api_kc"].return_value.get_user_by_id.return_value = {"email": dar_user}
+        mock_kc_client["datasets_route_kc"].return_value.patch_resource.return_value = Mock()
+        mock_kc_client["datasets_route_kc"].return_value.get_user_by_id.return_value = {"email": dar_user}
 
         response = client.patch(
             f"/datasets/{dataset.id}",
@@ -744,15 +737,15 @@ class TestPatchDataset(MixinTestDataset):
             headers=post_json_admin_header
         )
         assert response.status_code == 202
-        ds = Dataset.query.filter(Dataset.id == dataset.id).one_or_none()
+        ds = self.run_query(select(Dataset).filter(Dataset.id == dataset.id), "one_or_none")
         assert ds.name == "new_name"
 
         mock_kc_client["dataset_kc"].return_value.patch_resource.assert_called_with(
             f'{dataset.id}-{ds_old_name}',
             **{'displayName': f'{dataset.id} - new_name','name': f'{dataset.id}-new_name'}
         )
-        mock_kc_client["datasets_api_kc"].assert_any_call(**{'client':expected_client})
-        mock_kc_client["datasets_api_kc"].return_value.patch_resource.assert_called_with(
+        mock_kc_client["datasets_route_kc"].assert_any_call(**{'client':expected_client})
+        mock_kc_client["datasets_route_kc"].return_value.patch_resource.assert_called_with(
             f'{dataset.id}-{ds_old_name}',
             **{'displayName': f'{dataset.id} - new_name','name': f'{dataset.id}-new_name'}
         )
@@ -816,7 +809,7 @@ class TestPatchDataset(MixinTestDataset):
             headers=post_json_admin_header
         )
         assert response.status_code == 500
-        ds = Dataset.query.filter(Dataset.id == dataset.id).one_or_none()
+        ds = self.run_query(select(Dataset).filter(Dataset.id == dataset.id), "one_or_none")
         assert ds.name == ds_old_name
 
     def test_patch_dataset_fails_on_keycloak_update(
@@ -840,8 +833,8 @@ class TestPatchDataset(MixinTestDataset):
             json=data_body,
             headers=post_json_admin_header
         )
-        assert response.status_code == 500, response.data
-        ds = Dataset.query.filter(Dataset.id == dataset.id).one_or_none()
+        assert response.status_code == 500
+        ds = self.run_query(select(Dataset).filter(Dataset.id == dataset.id), "one_or_none")
         assert ds.name == ds_old_name
 
     @mock.patch('app.services.datasets.Keycloak.patch_resource', side_effect=KeycloakError("Failed to patch the resource"))
@@ -907,7 +900,7 @@ class TestBeacon:
             headers=post_json_admin_header
         )
         assert response.status_code == 200
-        assert response.json['result'] == 'Ok'
+        assert response.json()['result'] == 'Ok'
 
     def test_beacon_available_to_admin_invalid_query(
             self,
@@ -933,7 +926,7 @@ class TestBeacon:
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json['result'] == 'Invalid'
+        assert response.json()['result'] == 'Invalid'
 
     def test_beacon_connection_failed(
             self,
@@ -964,7 +957,7 @@ class TestBeacon:
             headers=post_json_admin_header
         )
         assert response.status_code == 500
-        assert response.json['error'] == 'Could not connect to the database'
+        assert response.json()['error'] == 'Could not connect to the database'
 
 
 class TestDeleteDataset(MixinTestDataset):
@@ -1028,7 +1021,7 @@ class TestDeleteDataset(MixinTestDataset):
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert Dataset.query.filter_by(id=ds_id).one_or_none()
+        assert Dataset.get_by_id(self.db_session, ds_id, raise_if_not_found=False) is not None
 
     def test_delete_dataset_with_secrets_not_found_error(
             self,
@@ -1051,7 +1044,8 @@ class TestDeleteDataset(MixinTestDataset):
             headers=post_json_admin_header
         )
         assert response.status_code == 204
-        assert not Dataset.query.filter_by(id=ds_id).one_or_none()
+        self.db_session.expire_all()
+        assert Dataset.get_by_id(self.db_session, ds_id, raise_if_not_found=False) is None
 
     def test_delete_dataset_with_catalougues(
             self,
@@ -1070,8 +1064,10 @@ class TestDeleteDataset(MixinTestDataset):
             headers=post_json_admin_header
         )
         assert response.status_code == 204
-        assert Catalogue.query.filter_by(dataset_id=ds_id).count() == 0
-        assert Dictionary.query.filter_by(dataset_id=ds_id).count() == 0
+        assert self.run_query(
+                select(func.count(Catalogue.id)).where(Catalogue.dataset_id==ds_id), "one") == 0
+        assert self.run_query(
+                select(func.count(Dictionary.id)).where(Dictionary.dataset_id==ds_id), "one") == 0
 
     def test_delete_dataset_unauthorized(
             self,

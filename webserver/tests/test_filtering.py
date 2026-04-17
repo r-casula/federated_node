@@ -1,11 +1,12 @@
-from unittest import mock
 from datetime import datetime as dt, timedelta as td
 from app.models.audit import Audit
+from app.helpers.base_model import get_db
 
 
 def test_filter_by_date(
         client,
         simple_admin_header,
+        db_session
 ):
     """
     Testing the efficacy of filtering by date fields
@@ -28,7 +29,7 @@ def test_filter_by_date(
     }
     for idx in range(3):
         base_audit["event_time"] = dt.now() - td(days=idx)
-        Audit(**base_audit).add()
+        Audit(**base_audit).add(db_session)
 
     filters = {
         '': 1,
@@ -41,6 +42,6 @@ def test_filter_by_date(
     }
     target_date = (dt.now() - td(days=1)).date().strftime("%Y-%m-%d")
     for fil, expected_results in filters.items():
-        resp = client.get("/audit", query_string={f"event_time{fil}": target_date}, headers=simple_admin_header)
+        resp = client.get("/audit", params={f"event_time{fil}": target_date}, headers=simple_admin_header)
         assert resp.status_code == 200
-        assert resp.json["total"] == expected_results
+        assert resp.json()["total"] == expected_results

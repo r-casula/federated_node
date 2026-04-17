@@ -1,6 +1,8 @@
 import json
 import logging
 from kubernetes.client.exceptions import ApiException
+from requests import Session
+from sqlalchemy import select
 
 from app.models.registry import Registry
 from app.helpers.container_registries import BaseRegistry, DockerRegistry
@@ -16,26 +18,28 @@ logger.setLevel(logging.INFO)
 
 class RegistryService:
     @staticmethod
-    def add(data: RegistryCreate) -> Registry:
+    def add(session:Session, data: RegistryCreate) -> Registry:
+        q = select(Registry).where(Registry.url == data.url)
+        if session.execute(q).one_or_none():
+            raise InvalidRequest(f"Registry {data.url} already exist")
+
         reg_data = data.model_dump()
+
         reg = Registry(**reg_data)
         _class: BaseRegistry = reg.get_registry_class()
         _class.login()
         reg.update_regcred()
-        reg.add()
+        reg.add(session)
         return reg
 
     @staticmethod
-    def update(registry:Registry, data: RegistryUpdate) -> None:
+    def update(session:Session, registry:Registry, data: RegistryUpdate) -> None:
         """
         Updates the instance with new values. These should be
         already validated.
         """
         if data.active is not None:
-            registry.query.filter(Registry.id == registry.id).update(
-                {"active": data.active},
-                synchronize_session='evaluate'
-            )
+            registry.update(session, {"active": data.active})
 
         if not(data.username or data.password):
             return

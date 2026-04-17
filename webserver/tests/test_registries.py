@@ -1,12 +1,14 @@
 import base64
 import json
 from kubernetes.client import ApiException
+from sqlalchemy import func, select
 
 from tests.fixtures.azure_cr_fixtures import *
+from tests.base_test_class import BaseTest
 from app.helpers.settings import settings, kc_settings
 
 
-class TestGetRegistriesApi:
+class TestGetRegistriesApi(BaseTest):
     def test_list_200(
         self,
         registry,
@@ -22,7 +24,7 @@ class TestGetRegistriesApi:
             headers=simple_admin_header
         )
         assert resp.status_code == 200
-        assert resp.json["items"] == [{
+        assert resp.json()["items"] == [{
             'id': registry.id,
             'needs_auth': registry.needs_auth,
             'active': registry.active,
@@ -76,7 +78,7 @@ class TestGetRegistriesApi:
             headers=simple_admin_header
         )
         assert resp.status_code == 200
-        assert resp.json == {
+        assert resp.json() == {
             "id": registry.id,
             "needs_auth": registry.needs_auth,
             'active': registry.active,
@@ -99,7 +101,7 @@ class TestGetRegistriesApi:
             headers=simple_admin_header
         )
         assert resp.status_code == 404
-        assert resp.json["error"] == "Registry not found"
+        assert resp.json()["error"] == f"Registry with id {registry.id + 1} does not exist"
 
     def test_get_registry_by_id_non_admin_403(
         self,
@@ -120,7 +122,7 @@ class TestGetRegistriesApi:
         assert resp.status_code == 403
 
 
-class TestPostRegistriesApi:
+class TestPostRegistriesApi(BaseTest):
     def test_create_registry_201(
         self,
         client,
@@ -178,7 +180,7 @@ class TestPostRegistriesApi:
                 headers=post_json_admin_header
             )
         assert resp.status_code == 400
-        assert resp.json["error"] == "Could not authenticate against the registry"
+        assert resp.json()["error"] == "Could not authenticate against the registry"
 
     def test_create_registry_missing_secret(
         self,
@@ -234,7 +236,7 @@ class TestPostRegistriesApi:
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json["error"][0] == {'field': ['url'], 'message': 'Field required', 'type': 'missing'}
+        assert resp.json()["error"][0] == {'field': ['body', 'url'], 'message': 'Field required', 'type': 'missing'}
 
     def test_create_duplicate(
         self,
@@ -258,10 +260,11 @@ class TestPostRegistriesApi:
                 headers=post_json_admin_header
             )
         assert resp.status_code == 400
-        assert resp.json["error"] == f"Registry {registry.url} already exist"
-        assert Registry.query.filter_by(url=registry.url).count() == 1
+        assert resp.json()["error"] == f"Registry {registry.url} already exist"
+        assert self.run_query(select(func.count(Registry.id)).where(Registry.url==registry.url), "one") == 1
 
-class TestDeleteRegistries:
+
+class TestDeleteRegistries(BaseTest):
     def test_delete_registry(
             self,
             client,
@@ -321,14 +324,15 @@ class TestDeleteRegistries:
             headers=simple_admin_header
         )
         assert response.status_code == 500
-        assert Registry.query.filter_by(id=reg_id).one_or_none() is None
+        assert Registry.get_by_id(self.db_session, reg_id, raise_if_not_found=False) is not None
 
     def test_delete_cascade_containers(
             self,
             client,
             registry,
             reg_k8s_client,
-            simple_admin_header
+            simple_admin_header,
+            db_session
     ):
         """
         Tests that by simply deleting a registry all of its
@@ -339,24 +343,25 @@ class TestDeleteRegistries:
             registry=registry,
             name="newimage",
             tag="1.0.0"
-        ).add()
+        ).add(db_session)
         Container(
             registry=registry,
             name="newimage",
             tag="1.3.0"
-        ).add()
+        ).add(db_session)
 
         response = client.delete(
             f"/registries/{reg_id}",
             headers=simple_admin_header
         )
         assert response.status_code == 204
-        assert Registry.query.filter_by(id=reg_id).one_or_none() is None
-        assert Container.query.filter_by(
-            name="newimage", registry_id=reg_id
-            ).count() == 0
+        assert Registry.get_by_id(self.db_session, reg_id, raise_if_not_found=False) is None
+        assert self.run_query(select(func.count(Container.id)).where(
+            Container.name=="newimage", Container.registry_id==reg_id
+            ), "one") == 0
 
-class TestPatchRegistriesApi:
+
+class TestPatchRegistriesApi(BaseTest):
     def test_patch_registry(
         self,
         client,
@@ -376,7 +381,9 @@ class TestPatchRegistriesApi:
             headers=post_json_admin_header
         )
         assert resp.status_code == 204
-        assert registry.active == data["active"]
+        assert self.run_query(
+            select(func.count(Registry.id)).where(Registry.id==registry.id, Registry.active == data["active"])
+        , "one") == 1
         # it patches the regcreds-like secret at registry creation
         k8s_client["patch_namespaced_secret_mock"].call_count == 1
 
@@ -432,7 +439,7 @@ class TestPatchRegistriesApi:
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json["error"] == "No valid changes detected"
+        assert resp.json()["error"] == "No valid changes detected"
         # it patches the regcreds-like secret at registry creation
         k8s_client["patch_namespaced_secret_mock"].call_count == 1
 
@@ -454,8 +461,8 @@ class TestPatchRegistriesApi:
             json=data,
             headers=post_json_admin_header
         )
-        assert resp.status_code == 400
-        assert resp.json["error"] == f"Registry {registry.id + 1} not found"
+        assert resp.status_code == 404
+        assert resp.json()["error"] == f"Registry with id {registry.id + 1} does not exist"
 
     def test_patch_registry_url_change_not_allowed(
         self,
@@ -476,7 +483,7 @@ class TestPatchRegistriesApi:
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json["error"] == "No valid changes detected"
+        assert resp.json()["error"] == "No valid changes detected"
 
     def test_patch_registry_k8s_fail(
         self,
@@ -501,4 +508,4 @@ class TestPatchRegistriesApi:
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json["error"] == "Could not update credentials"
+        assert resp.json()["error"] == "Could not update credentials"

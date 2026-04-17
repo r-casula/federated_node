@@ -1,8 +1,10 @@
 from typing import Optional
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from sqlalchemy import select
 
 from app.helpers.exceptions import InvalidRequest
 from app.models.registry import Registry
+from app.helpers.base_model import get_db
 
 
 class RegistryBase(BaseModel):
@@ -16,13 +18,6 @@ class RegistryBase(BaseModel):
 class RegistryCreate(RegistryBase):
     username: str
     password: str
-
-    @field_validator('url')
-    @classmethod
-    def validate_name(cls, v: str):
-        if Registry.query.filter_by(url=v).one_or_none():
-            raise InvalidRequest(f"Registry {v} already exist")
-        return v
 
 
 class RegistryUpdate(RegistryCreate):

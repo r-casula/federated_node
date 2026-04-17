@@ -5,71 +5,69 @@ user-related endpoints:
 - PUT /users/reset-password
 """
 from http import HTTPStatus
-from flask import Blueprint, request
+from fastapi import APIRouter, Depends, Request
 
 from app.helpers.exceptions import InvalidRequest
 from app.helpers.keycloak import Keycloak
+from app.helpers.wrappers import Auth, audit
+from app.schemas.users import ResetPassword, UserPost
+from app.helpers.keycloak import Keycloak
 from app.helpers.settings import settings, kc_settings
-from app.helpers.wrappers import audit, auth
-
-bp = Blueprint('users', __name__, url_prefix='/users')
 
 
-@bp.route('/', methods=['POST'])
-@bp.route('', methods=['POST'])
+router = APIRouter(tags=["users"], prefix="/users")
+
+
+@router.post('', status_code=HTTPStatus.CREATED, dependencies=[Depends(Auth("can_do_admin"))])
 @audit
-@auth(scope='can_do_admin')
-def create_user():
+async def create_user(request: Request, body: UserPost):
     """
     POST /users endpoint. Creates a KC user, and sets a temp
         password for them.
     """
-    if not request.is_json:
-        raise InvalidRequest("Request body should be a json")
-
-    data = request.json
-    if data.get("email") is None:
-        raise InvalidRequest("An email should be provided")
-
     # If a username is not provided, use the email
-    if data.get("username") is None:
-        data["username"] = data["email"]
+    if body.username is None:
+        body.username = body.email
 
     kc = Keycloak()
-    if kc.get_user_by_email(email=request.json.get("email")):
+    if kc.get_user_by_email(email=body.email):
         raise InvalidRequest("User already exists")
-    user_info = kc.create_user(set_temp_pass=True, **data)
+    user_info = kc.create_user(set_temp_pass=True, **body.model_dump())
 
     return {
-        "email": data["email"],
+        "email": body.email,
         "username": user_info["username"],
         "tempPassword": user_info["password"],
         "info": "The user should change the temp password at " \
             f"https://{settings.public_url}/users/reset-password"
-    }, HTTPStatus.CREATED
+    }
 
-
-@bp.route('reset-password', methods=['PUT'])
-def reset_password():
+@router.put(
+    '/reset-password',
+    status_code=HTTPStatus.NO_CONTENT
+)
+async def reset_password(request: Request, body: ResetPassword):
     """
     POST /users/reset-password endpoint. Interface to keycloak
         API, so we can change the credentials and make sure
         there are no pending action to undertake
     """
     kc = Keycloak()
-    user = kc.get_user_by_email(email=request.json.get("email"))
+    user = kc.get_user_by_email(email=body.email)
     kc.reset_user_pass(
         user_id=user["id"], username=user["username"],
-        old_pass=request.json.get("tempPassword"),
-        new_pass=request.json.get("newPassword")
+        old_pass=body.temp_password,
+        new_pass=body.new_password
     )
-    return '', HTTPStatus.NO_CONTENT
 
-@bp.route('/', methods=['GET'])
-@bp.route('', methods=['GET'])
+
+@router.get(
+    '',
+    status_code=HTTPStatus.OK,
+    dependencies=[Depends(Auth("can_do_admin"))]
+)
 @audit
-@auth(scope='can_do_admin')
-def get_users_list():
+async def get_users_list(request: Request):
     """
     GET /users/ endpoint. This is a simplified version
     of what keycloak returns as a user list.
@@ -86,4 +84,4 @@ def get_users_list():
         } for user in ls_users if user["username"] != kc_settings.keycloak_admin
     ]
 
-    return normalised_list, HTTPStatus.OK
+    return normalised_list

@@ -2,19 +2,20 @@ import logging
 import json
 import re
 from datetime import datetime, timedelta
+from typing import Self, Tuple
+from uuid import uuid4
 from kubernetes.client import V1CustomResourceDefinition
 from kubernetes.client.exceptions import ApiException
-from sqlalchemy import Column, Integer, DateTime, String, ForeignKey, Boolean
-from sqlalchemy.orm import relationship
+from sqlalchemy import Integer, DateTime, Select, String, ForeignKey, Boolean, select
+from sqlalchemy.orm import Mapped, Session, joinedload, relationship, mapped_column
 from sqlalchemy.sql import func
-from uuid import uuid4
 
 import urllib3
 from app.helpers.const import (
     MEMORY_RESOURCE_REGEX, MEMORY_UNITS, CPU_RESOURCE_REGEX
 )
 from app.helpers.settings import settings
-from app.helpers.base_model import BaseModel, db
+from app.helpers.base_model import BaseModel
 from app.helpers.keycloak import Keycloak
 from app.helpers.kubernetes import KubernetesBatchClient, KubernetesCRDClient, KubernetesClient
 from app.helpers.exceptions import (
@@ -36,19 +37,27 @@ REVIEW_STATUS = {
 }
 
 
-class Task(db.Model, BaseModel):
+class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instance-attributes
     __tablename__ = 'tasks'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(256), nullable=False)
-    docker_image = Column(String(256), nullable=False)
-    description = Column(String(4096))
-    pod_status = Column(String(256), server_default='scheduled')
-    created_at = Column(DateTime(timezone=False), server_default=func.now())
-    updated_at = Column(DateTime(timezone=False), onupdate=func.now())
-    requested_by = Column(String(256), nullable=False)
-    review_status = Column(Boolean, nullable=True)
-    dataset_id = Column(Integer, ForeignKey(Dataset.id, ondelete='CASCADE'))
-    dataset = relationship("Dataset")
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    docker_image: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str] = mapped_column(String(4096))
+    pod_status: Mapped[str] = mapped_column(String(256), server_default='scheduled')
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, insert_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=True, onupdate=func.now()
+    )
+    requested_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    review_status: Mapped[bool] = mapped_column(Boolean, nullable=True)
+
+    dataset_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey(Dataset.id, ondelete='CASCADE')
+    )
+    dataset: Mapped["Dataset"]  = relationship("Dataset", overlaps="task")
 
     def __init__(self, **kwargs):
         self.executors = kwargs.pop("executors")
@@ -57,7 +66,17 @@ class Task(db.Model, BaseModel):
         self.is_from_controller = kwargs.pop("from_controller", False)
         self.db_query = kwargs.pop("db_query", {})
         self.resources = kwargs.pop("resources", {})
+        self.regcred_secret = kwargs.pop("regcred_secret", "")
+        self.created_at = datetime.now()
+        self.updated_at = datetime.now()
         super().__init__(**kwargs)
+
+    @classmethod
+    def get_by_id(
+        cls, session:Session, obj_id: int, _raise_if_not_found:bool = True
+    ) -> Self | None:
+        q = select(cls).options(joinedload(cls.dataset)).where(cls.id == obj_id)
+        return session.execute(q).scalars().one_or_none()
 
     @classmethod
     def validate_cpu_resources(cls, limit_value:str, request_value:str):
@@ -75,7 +94,9 @@ class Task(db.Model, BaseModel):
             cpu_error_message = f"Cpu resource value {value} not valid."
             if not re.match(CPU_RESOURCE_REGEX, value):
                 raise InvalidRequest(cpu_error_message)
-        if cls.convert_cpu_values_to_int(limit_value) < cls.convert_cpu_values_to_int(request_value):
+        cpu_req_float = cls._convert_cpu_values_to_int(request_value)
+        cpu_lim_float = cls._convert_cpu_values_to_int(limit_value)
+        if cpu_lim_float < cpu_req_float:
             raise InvalidRequest("Cpu limit cannot be lower than request")
 
     @classmethod
@@ -96,11 +117,13 @@ class Task(db.Model, BaseModel):
             memory_error_msg = f"Memory resource value {value} not valid."
             if not re.match(MEMORY_RESOURCE_REGEX, value):
                 raise InvalidRequest(memory_error_msg)
-        if cls.convert_memory_values_to_int(limit_value) < cls.convert_memory_values_to_int(request_value):
+        mem_lim_int = cls._convert_memory_values_to_int(limit_value)
+        mem_res_int = cls._convert_memory_values_to_int(request_value)
+        if mem_lim_int < mem_res_int:
             raise InvalidRequest("Memory limit cannot be lower than request")
 
     @classmethod
-    def convert_cpu_values_to_int(cls, val:str) -> float:
+    def _convert_cpu_values_to_int(cls, val:str) -> float:
         """
         Since cpu values can come with different units,
         they should be standardized to float, so that they can
@@ -113,7 +136,7 @@ class Task(db.Model, BaseModel):
         return float(val[:-1]) / 1000
 
     @classmethod
-    def convert_memory_values_to_int(cls, val:str) -> int:
+    def _convert_memory_values_to_int(cls, val:str) -> int:
         """
         Since memory values can come with different units,
         they should be standardized to int, so that they can
@@ -132,24 +155,31 @@ class Task(db.Model, BaseModel):
         return int(base) * MEMORY_UNITS[unit]
 
     @classmethod
-    def split_registry_from_image(cls, docker_image:str) -> tuple[str, str]:
+    def split_registry_from_image(cls, session:Session, docker_image:str) -> tuple[str, str]:
         """
         Find the registry
         """
         for i in range(len(docker_image.split('/'))):
             registry = "/".join(docker_image.split('/')[0:i])
-            if Registry.query.filter_by(url=registry).count() == 1:
+
+            q = select(func.count(Registry.id)).where(Registry.url == registry)
+
+            if session.execute(q).scalar_one() == 1:
                 return registry, "/".join(docker_image.split('/')[i:])
 
-        raise InvalidRequest("Could not find the image in the mapped registries. Check the image has the full name")
+        raise InvalidRequest(
+            "Could not find the image in the mapped registries. Check the image has the full name"
+        )
 
     @classmethod
-    def get_image_with_repo(cls, docker_image:str, string_only:bool=True) -> str | Container:
+    def get_image_with_repo(
+        cls, session:Session, docker_image:str, string_only:bool=True
+    ) -> str | Container:
         """
         Looks through the CRs for the image and if exists,
         returns the full image name with the repo prefixing the image.
         """
-        registry, image = cls.split_registry_from_image(docker_image)
+        registry, image = cls.split_registry_from_image(session, docker_image)
 
         tag = None
         sha = None
@@ -157,12 +187,20 @@ class Task(db.Model, BaseModel):
             image_name, sha = image.split('@')
         else:
             image_name, tag = image.split(':')
-        image: Container = Container.query.filter(
+
+        q: Select[Tuple[Container]] = select(Container).options(
+            joinedload(Container.registry)
+        ).where(
             Container.name==image_name,
             Registry.url == registry,
-        ).filter(
-            (((Container.tag==tag) & (Container.tag != None)) | ((Container.sha==sha) & (Container.sha != None)))
-        ).join(Registry).one_or_none()
+        ).where(
+            (
+                ((Container.tag==tag) & (Container.tag is not None)) |
+                ((Container.sha==sha) & (Container.sha is not None))
+            )
+        ).join(Registry)
+        image = session.execute(q).scalars().one_or_none()
+
         if image is None:
             raise TaskExecutionException(f"Image {docker_image} could not be found")
 
@@ -200,13 +238,16 @@ class Task(db.Model, BaseModel):
         return exp_date.strftime("%Y%m%d")
 
     def needs_crd(self):
+        """
+        Wrapper for few feature flag to know if we need to handle CRDs
+        """
         return (
             (not self.is_from_controller) and \
                 settings.task_controller is not None \
                     and settings.auto_delivery_results is not None
             )
 
-    def run(self, validate=False):
+    def run(self, validate=False) -> None:
         """
         Method to spawn a new pod with the requested image
         : param validate : An optional parameter to basically run in dry_run mode
@@ -219,8 +260,6 @@ class Task(db.Model, BaseModel):
         command=None
         if len(self.executors):
             command= self.executors[0].get("command", '')
-
-        image: Container = self.get_image_with_repo(self.docker_image, False)
 
         body = TaskPod(**{
             "name": self.pod_name(),
@@ -240,7 +279,7 @@ class Task(db.Model, BaseModel):
             "input_path": self.inputs,
             "resources": self.resources,
             "env_from": v1.create_from_env_object(secret_name),
-            "regcred_secret": image.registry.slugify_name()
+            "regcred_secret": self.regcred_secret
         }).create_pod_spec()
         try:
             current_pod = self.get_current_pod()
@@ -280,7 +319,8 @@ class Task(db.Model, BaseModel):
                 if self.docker_image in images and not statuses:
                     return pod
         except IndexError:
-            return
+            pass
+        return None
 
     @property
     def status(self):
@@ -379,7 +419,9 @@ class Task(db.Model, BaseModel):
             v1 = KubernetesClient()
             v1.is_pod_ready(label=f"job-name={job_name}")
 
-            job_pod = v1.list_namespaced_pod(namespace=settings.task_namespace, label_selector=f"job-name={job_name}").items[0]
+            job_pod = v1.list_namespaced_pod(
+                namespace=settings.task_namespace, label_selector=f"job-name={job_name}"
+            ).items[0]
 
             res_file = v1.cp_from_pod(
                 pod_name=job_pod.metadata.name,
@@ -429,7 +471,8 @@ class Task(db.Model, BaseModel):
                         "image": self.docker_image,
                         "project": "federated_node",
                         "source": {
-                            "repository": self.dataset.repository or "Aridhia-Open-Source/PHEMS_federated_node"
+                            "repository": self.dataset.repository or
+                                        "Aridhia-Open-Source/PHEMS_federated_node"
                         },
                         "user": {
                             "idpId": "",
@@ -441,7 +484,6 @@ class Task(db.Model, BaseModel):
         except ApiException as apie:
             if apie.status != 409:
                 raise TaskCRDExecutionException(apie.body, apie.status) from apie
-            pass
 
     def get_review_status(self) -> str:
         """
@@ -463,6 +505,7 @@ class Task(db.Model, BaseModel):
         for crd in v1_crds["items"]:
             if crd["metadata"]["annotations"].get(f"{settings.crd_domain}/task_id") == str(self.id):
                 return crd["metadata"]["name"]
+        return None
 
     def get_task_crd(self) -> V1CustomResourceDefinition|None:
         """

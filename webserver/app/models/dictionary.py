@@ -1,31 +1,31 @@
-from sqlalchemy import Column, Integer, DateTime, String, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import relationship
+# pylint: disable=duplicate-code
+from datetime import datetime as dt
+from sqlalchemy import Integer, DateTime, String, ForeignKey, UniqueConstraint
+from sqlalchemy.orm import Mapped, relationship, mapped_column
+from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func
-from app.helpers.base_model import BaseModel, db
-from app.helpers.exceptions import InvalidRequest
+from app.helpers.base_model import BaseModel
 from app.models.dataset import Dataset
 
 
-class Dictionary( db.Model, BaseModel):
+class Dictionary(BaseModel):# pylint: disable=missing-class-docstring
     __tablename__ = 'dictionaries'
     __table_args__ = (
         UniqueConstraint('table_name', 'dataset_id', 'field_name'),
     )
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    table_name = Column(String(256), nullable=False)
-    field_name = Column(String(256), nullable=False)
-    label = Column(String(256))
-    description = Column(String(4096), nullable=False)
-    created_at = Column(DateTime(timezone=False), server_default=func.now())
-    updated_at = Column(DateTime(timezone=False), onupdate=func.now())
+    id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    table_name: MappedColumn[str] = mapped_column(String(256), nullable=False)
+    field_name: MappedColumn[str] = mapped_column(String(256), nullable=False)
+    label: MappedColumn[str] = mapped_column(String(256), nullable=True)
+    description: MappedColumn[str] = mapped_column(String(4096), nullable=False)
+    created_at: MappedColumn[dt] = mapped_column(
+        DateTime(timezone=False), server_default=func.now()
+    )
+    updated_at: MappedColumn[dt] = mapped_column(
+        DateTime(timezone=False), onupdate=func.now(), nullable=True
+    )
 
-    dataset_id = Column(Integer, ForeignKey(Dataset.id, ondelete='CASCADE'))
-    dataset = relationship("Dataset")
-
-    def update(self, **data):
-        for k, v in data.items():
-            if not hasattr(self, k):
-                raise InvalidRequest(f"Field {k} is not a valid one")
-            else:
-                setattr(self, k, v)
-        self.query.filter(Dictionary.id == self.id).update(data, synchronize_session='evaluate')
+    dataset_id: MappedColumn[int] = mapped_column(
+        Integer, ForeignKey(Dataset.id, ondelete='CASCADE')
+    )
+    dataset:Mapped["Dataset"] = relationship("Dataset")

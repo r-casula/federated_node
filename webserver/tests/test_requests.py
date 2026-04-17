@@ -4,10 +4,9 @@ import requests
 import os
 from datetime import datetime as dt, timedelta
 from sqlalchemy import update
-from app.helpers.base_model import db
-from app.models.request import Request
+from app.models.request import RequestModel
 from app.helpers.keycloak import Keycloak
-from app.helpers.settings import kc_settings
+from tests.base_test_class import BaseTest
 
 
 @pytest.fixture
@@ -22,7 +21,7 @@ def request_base_body():
     }
 
 @pytest.mark.skip("The requests/ endpoints are deactivated for the time being")
-class TestRequests:
+class TestRequests(BaseTest):
     def create_request(self, client, body:dict, header:dict, status_code=201):
         """
         Common function to handle a request and check for a status_code
@@ -106,7 +105,7 @@ class TestRequests:
         Test the approval of a non existent request returns a 404
         """
         response_approval = self.approve_request(client, 12354, simple_admin_header, 404)
-        assert response_approval == {'error': 'Data Access Request 12354 not found'}
+        assert response_approval == {'error': 'Data Access RequestModel 12354 not found'}
 
     def test_create_request_and_approve_is_successful(
             self,
@@ -125,7 +124,7 @@ class TestRequests:
         """
         email_req = json.loads(access_request.requested_by)["email"]
         response_approval = self.approve_request(client, access_request.id, simple_admin_header)
-        kc_client = Keycloak(f"Request {email_req} - {access_request.project_name}")
+        kc_client = Keycloak(f"RequestModel {email_req} - {access_request.project_name}")
         assert kc_client.get_resource(f"{dataset.id}-{dataset.name}") is not None
 
         response_ds = client.get(
@@ -167,7 +166,7 @@ class TestRequests:
         """
         response_approval = self.approve_request(client, access_request.id, simple_admin_header)
         response_approval = self.approve_request(client, access_request.id, simple_admin_header, 200)
-        assert response_approval == {"message": "Request already approved"}
+        assert response_approval == {"message": "RequestModel already approved"}
 
     def test_approve_request_already_denied(
             self,
@@ -178,13 +177,13 @@ class TestRequests:
         """
         Test the request fails if the dataset id is not found
         """
-        query = update(Request).\
-            where(Request.id == access_request.id).\
-            values(status=Request.STATUSES["denied"])
-        db.session.execute(query)
-        db.session.commit()
+        query = update(RequestModel).\
+            where(RequestModel.id == access_request.id).\
+            values(status=RequestModel.STATUSES["denied"])
+        self.db_session.execute(query)
+        self.db_session.commit()
         response_approval = self.approve_request(client, access_request.id, simple_admin_header, 500)
-        assert response_approval == {"error": "Request was denied already"}
+        assert response_approval == {"error": "RequestModel was denied already"}
 
     def test_create_request_with_same_project_is_successful(
             self,
@@ -208,7 +207,7 @@ class TestRequests:
         req_id = response_req['request_id']
 
         self.approve_request(client, req_id, simple_admin_header)
-        kc_client = Keycloak(f"Request {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
+        kc_client = Keycloak(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
         assert kc_client.get_resource(f"{dataset.id}-{dataset.name}") is not None
 
         # Second request
@@ -217,7 +216,7 @@ class TestRequests:
         req_id = response_req['request_id']
 
         self.approve_request(client, req_id, simple_admin_header)
-        kc_client2 = Keycloak(f"Request {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
+        kc_client2 = Keycloak(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
         assert kc_client2.get_resource(f"{dataset_oracle.id}-{dataset_oracle.name}") is not None
 
         # Cleanup
@@ -250,7 +249,7 @@ class TestRequests:
         req_id = response_req['request_id']
 
         response_approval = self.approve_request(client, req_id, simple_admin_header)
-        kc_client = Keycloak(f"Request {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
+        kc_client = Keycloak(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
         assert kc_client.get_resource(f"{dataset.id}-{dataset.name}") is not None
 
 
@@ -291,7 +290,7 @@ class TestRequests:
         req_id = response_req['request_id']
 
         response_approval = self.approve_request(client, req_id, simple_admin_header)
-        kc_client = Keycloak(f"Request {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
+        kc_client = Keycloak(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
         assert kc_client.get_resource(f"{dataset.id}-{dataset.name}") is not None
 
 
@@ -322,4 +321,4 @@ class TestRequests:
         response = self.create_request(client, request_base_body, post_json_admin_header, 404)
 
         assert response == {"error": "Dataset with id 100 does not exist"}
-        assert Request.get_all() == []
+        assert RequestModel.get_all() == []

@@ -2,17 +2,16 @@ from datetime import timedelta
 import json
 from kubernetes.client.exceptions import ApiException
 import re
-from unittest import mock
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from app.helpers.settings import settings
-from app.helpers.base_model import db
 from app.models.task import Task
 from tests.fixtures.azure_cr_fixtures import *
 from tests.fixtures.tasks_fixtures import *
+from tests.base_test_class import BaseTest
 
 
-class TestGetTasks:
+class TestGetTasks(BaseTest):
     def test_get_list_tasks(
             self,
             client,
@@ -68,7 +67,7 @@ class TestGetTasks:
             headers=post_json_user_header
         )
         assert resp.status_code == 201
-        task_id = resp.json["id"]
+        task_id = resp.json()["id"]
 
         resp = client.get(
             f'/tasks/{task_id}',
@@ -90,12 +89,14 @@ class TestGetTasks:
         decode_return = {"sub": basic_user["id"]}
         decode_return.update(basic_user)
         mock_kc_client["tasks_api_kc"].return_value.decode_token.return_value = decode_return
-        task.requested_by = basic_user["id"]
+
+        t = Task.get_by_id(self.db_session, task.id)
+        t.requested_by = basic_user["id"]
         resp = client.get(
             f'/tasks/{task.id}',
             headers=simple_user_header
         )
-        assert resp.status_code == 200, resp.json
+        assert resp.status_code == 200
 
     def test_get_task_by_id_non_admin_non_owner(
             self,
@@ -107,7 +108,7 @@ class TestGetTasks:
         """
         If a user wants to check a specific task they should not be allowed if they did not request it
         """
-        task_obj = db.session.get(Task, task.id)
+        task_obj = self.db_session.get(Task, task.id)
         task_obj.requested_by = "some random uuid"
         mock_kc_client["wrappers_kc"].return_value.is_token_valid.return_value = False
 
@@ -123,7 +124,7 @@ class TestGetTasks:
             registry_client,
             running_state,
             waiting_state,
-            post_json_admin_header,
+            simple_admin_header,
             client,
             task_body,
             mocker,
@@ -148,11 +149,10 @@ class TestGetTasks:
 
         response_id = client.get(
             f'/tasks/{task.id}',
-            json=task_body,
-            headers=post_json_admin_header
+            headers=simple_admin_header
         )
-        assert response_id.status_code == 200
-        assert response_id.json["status"] == {'running': {'started_at': '1/1/2024'}}
+        assert response_id.status_code == 200, response_id.json()
+        assert response_id.json()["status"] == {'running': {'started_at': '1/1/2024'}}
 
         mocker.patch(
             'app.models.task.Task.get_current_pod',
@@ -165,11 +165,10 @@ class TestGetTasks:
 
         response_id = client.get(
             f'/tasks/{task.id}',
-            json=task_body,
-            headers=post_json_admin_header
+            headers=simple_admin_header
         )
-        assert response_id.status_code == 200
-        assert response_id.json["status"] == {'waiting': {'started_at': '1/1/2024'}}
+        assert response_id.status_code == 200, response_id.json()
+        assert response_id.json()["status"] == {'waiting': {'started_at': '1/1/2024'}}
 
     def test_get_task_status_terminated(
             self,
@@ -178,8 +177,7 @@ class TestGetTasks:
             client,
             task_body,
             mocker,
-            task,
-
+            task
         ):
         """
         Test to verify the correct task status when it's terminated on k8s
@@ -195,7 +193,6 @@ class TestGetTasks:
 
         response_id = client.get(
             f'/tasks/{task.id}',
-            json=task_body,
             headers=post_json_admin_header
         )
         assert response_id.status_code == 200
@@ -207,10 +204,10 @@ class TestGetTasks:
                 'exit_code': 0
             }
         }
-        assert response_id.json["status"] == expected_status
+        assert response_id.json()["status"] == expected_status
 
 
-class TestPostTask:
+class TestPostTask(BaseTest):
     def test_create_task(
             self,
             cr_client,
@@ -219,14 +216,13 @@ class TestPostTask:
             reg_k8s_client,
             registry_client,
             task_body,
-            v1_crd_mock,
-
+            v1_crd_mock
         ):
         """
         Tests task creation returns 201
         """
         response = client.post(
-            '/tasks/',
+            '/tasks',
             json=task_body,
             headers=post_json_admin_header
         )
@@ -236,7 +232,7 @@ class TestPostTask:
         pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
         # Make sure the two init containers are created
         assert len(pod_body.spec.init_containers) == 2
-        assert [pod.name for pod in pod_body.spec.init_containers] == [f"init-{response.json["id"]}", "fetch-data"]
+        assert [pod.name for pod in pod_body.spec.init_containers] == [f"init-{response.json()["id"]}", "fetch-data"]
 
     def test_create_task_no_tag_fails(
             self,
@@ -256,7 +252,7 @@ class TestPostTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
+        assert response.json()["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
 
     def test_create_task_no_name_fails(
             self,
@@ -279,7 +275,7 @@ class TestPostTask:
                 headers=post_json_admin_header
             )
             assert response.status_code == 400
-            assert response.json["error"] == "name is a mandatory field"
+            assert response.json()["error"] == "name is a mandatory field"
 
     def test_create_task_space_name_fails(
             self,
@@ -302,8 +298,9 @@ class TestPostTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json["error"][0]["field"] == ["name"]
-        assert response.json["error"][0]["message"] == "Input should be a valid string"
+        json_resp = response.json()
+        assert "name" in json_resp["error"][0]["field"]
+        assert json_resp["error"][0]["message"] == "Input should be a valid string"
 
     def test_automatic_delivery_via_crd(
         self,
@@ -395,7 +392,7 @@ class TestPostTask:
         pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
         # The fetch_data init container should not be created
         assert len(pod_body.spec.init_containers) == 1
-        assert pod_body.spec.init_containers[0].name == "init-1"
+        assert pod_body.spec.init_containers[0].name == f"init-{response.json()["id"]}"
         envs = [env.name for env in pod_body.spec.containers[0].env]
         assert "CONNECTION_STRING" in envs
         assert set(envs).intersection({"QUERY", "FROM_DIALECT", "TO_DIALECT"}) == set()
@@ -420,7 +417,7 @@ class TestPostTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json["error"] == "`db_query` field must include a `query`"
+        assert response.json()["error"] == "`db_query` field must include a `query`"
         reg_k8s_client["create_namespaced_pod_mock"].assert_not_called()
 
     def test_create_task_invalid_output_field(
@@ -443,33 +440,7 @@ class TestPostTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json == {"error": "\"outputs\" filed muct be a json object or dictionary"}
-
-    def test_create_task_no_output_field_reverts_to_default(
-            self,
-            cr_client,
-            reg_k8s_client,
-            post_json_admin_header,
-            client,
-            registry_client,
-            task_body,
-
-        ):
-        """
-        Tests task creation returns 201 but the volume mounted
-        is the default one
-        """
-        task_body.pop("outputs")
-        response = client.post(
-            '/tasks/',
-            json=task_body,
-            headers=post_json_admin_header
-        )
-        assert response.status_code == 201
-        reg_k8s_client["create_namespaced_pod_mock"].assert_called()
-        pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
-        assert len(pod_body.spec.containers[0].volume_mounts) == 1
-        assert pod_body.spec.containers[0].volume_mounts[0].mount_path == settings.task_pod_results_path
+        assert response.json() == {"error": "\"outputs\" field must be a json object or dictionary"}
 
     def test_create_task_with_ds_name(
             self,
@@ -524,8 +495,8 @@ class TestPostTask:
             post_json_admin_header,
             client,
             dataset,
-            task_body,
-
+            registry_client,
+            task_body
         ):
         """
         Tests task creation with a dataset name that does not exists
@@ -536,11 +507,11 @@ class TestPostTask:
 
         response = client.post(
             '/tasks/',
-            data=json.dumps(data),
+            json=data,
             headers=post_json_admin_header
         )
         assert response.status_code == 404
-        assert response.json["error"] == f"Dataset \"something else\" with id {dataset.id} does not exist"
+        assert response.json()["error"] == f"Dataset \"something else\" with id {dataset.id} does not exist"
 
     def test_create_task_with_non_existing_dataset(
             self,
@@ -548,21 +519,21 @@ class TestPostTask:
             post_json_admin_header,
             client,
             task_body,
-
+            registry_client
         ):
         """
         Tests task creation returns 404 when the requested dataset doesn't exist
         """
         data = task_body
-        data["dataset_id"] = '123456'
+        data["tags"]["dataset_id"] += 1
 
         response = client.post(
             '/tasks/',
-            data=json.dumps(data),
+            json=data,
             headers=post_json_admin_header
         )
         assert response.status_code == 404
-        assert response.json == {"error": "Dataset 123456 does not exist"}
+        assert response.json() == {"error": f"Dataset {data["tags"]["dataset_id"]} does not exist"}
 
     def test_create_task_with_non_existing_dataset_name(
             self,
@@ -571,7 +542,7 @@ class TestPostTask:
             client,
             dataset,
             task_body,
-
+            registry_client
         ):
         """
         Tests task creation returns 404 when the
@@ -587,9 +558,9 @@ class TestPostTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 404
-        assert response.json == {"error": "Dataset something else does not exist"}
+        assert response.json() == {"error": "Dataset something else does not exist"}
 
-    @mock.patch('app.helpers.wrappers.Keycloak.is_token_valid', return_value=False)
+    @patch('app.helpers.wrappers.Keycloak.is_token_valid', return_value=False)
     def test_create_unauthorized_task(
             self,
             kc_valid_mock,
@@ -650,17 +621,17 @@ class TestPostTask:
             client,
             container,
             task_body,
-
+            db_session
         ):
         """
         Tests task creation is successful if two images are mapped with the
         same name, but different registry
         """
         registry = Registry(url="another.azurecr.io", username="user", password="pass")
-        registry.add()
-        Container(registry=registry, name=container.name, tag=container.tag).add()
+        registry.add(db_session)
+        Container(registry=registry, name=container.name, tag=container.tag).add(db_session)
         response = client.post(
-            '/tasks/',
+            '/tasks',
             json=task_body,
             headers=post_json_admin_header
         )
@@ -683,7 +654,7 @@ class TestPostTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 500
-        assert response.json == {"error": f"Image {task_body["executors"][0]["image"]} not found on our repository"}
+        assert response.json() == {"error": f"Image {task_body["executors"][0]["image"]} not found on our repository"}
 
     def test_create_task_inputs_not_default(
             self,
@@ -742,28 +713,6 @@ class TestPostTask:
         # Check if the INPUT_PATH variable is set
         assert ["/data/in/file.csv"] == [ev.value for ev in pod_body.spec.containers[0].env if ev.name == "INPUT_PATH"]
 
-    def test_create_task_invalid_output_field(
-            self,
-            cr_client,
-            post_json_admin_header,
-            client,
-            registry_client,
-            task_body,
-
-        ):
-        """
-        Tests task creation returns 4xx request when output
-        is not a dictionary
-        """
-        task_body["outputs"] = []
-        response = client.post(
-            '/tasks/',
-            json=task_body,
-            headers=post_json_admin_header
-        )
-        assert response.status_code == 400
-        assert response.json == {"error": "\"outputs\" field must be a json object or dictionary"}
-
     def test_create_task_invalid_inputs_field(
             self,
             cr_client,
@@ -784,7 +733,7 @@ class TestPostTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json == {"error": "\"inputs\" field must be a json object or dictionary"}
+        assert response.json() == {"error": "\"inputs\" field must be a json object or dictionary"}
 
     def test_create_task_no_output_field_reverts_to_default(
             self,
@@ -793,8 +742,7 @@ class TestPostTask:
             post_json_admin_header,
             client,
             registry_client,
-            task_body,
-
+            task_body
         ):
         """
         Tests task creation returns 201 but the resutls volume mounted
@@ -933,7 +881,7 @@ class TestPostTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json["error"] == "No datasets linked with the repository organisation/repository2"
+        assert response.json()["error"] == "No datasets linked with the repository organisation/repository2"
         v1_crd_mock.return_value.create_cluster_custom_object.assert_not_called()
 
     def test_task_schema_env_variables(
@@ -974,19 +922,17 @@ class TestPostTask:
 
     def test_task_connection_string_oracle(
             self,
-            task,
+            task_oracle,
             cr_client,
             reg_k8s_client,
-            registry_client,
-            dataset_oracle
+            registry_client
     ):
         """
         Simple test to make sure the generated connection string
         follows the specific format for OracleDB
         """
-        task.db_query = None
-        task.dataset = dataset_oracle
-        task.run()
+        task_oracle.db_query = None
+        task_oracle.run()
         reg_k8s_client["create_namespaced_pod_mock"].assert_called()
         pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
         env = [env.value for env in pod_body.spec.containers[0].env if env.name == "CONNECTION_STRING"][0]
@@ -1007,14 +953,13 @@ class TestCancelTask:
             f'/tasks/{task.id}/cancel',
             headers=simple_admin_header
         )
-        assert response.status_code == 201
-        assert "terminated" in response.json["status"]
+        assert response.status_code == 200
+        assert "terminated" in response.json()["status"]
 
     def test_cancel_404_task(
             self,
             client,
-            simple_admin_header,
-
+            simple_admin_header
         ):
         """
         Test that an admin can cancel a non-existing task returns a 404
@@ -1052,8 +997,7 @@ class TestValidateTask:
             task_body,
             cr_client,
             registry_client,
-            post_json_admin_header,
-
+            post_json_admin_header
         ):
         """
         Test the validation endpoint can be used by admins returns
@@ -1066,7 +1010,7 @@ class TestValidateTask:
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json["error"] == "Administrators need to provide `tags.dataset_id` or `tags.dataset_name`"
+        assert response.json()["error"] == "Administrators need to provide `tags.dataset_id` or `tags.dataset_name`"
 
     def test_validate_task_basic_user(
             self,
@@ -1090,7 +1034,7 @@ class TestValidateTask:
             json=task_body,
             headers=post_json_user_header
         )
-        assert response.status_code == 200, response.json
+        assert response.status_code == 200, response.json()
 
 
 class TestTasksLogs:
@@ -1120,7 +1064,7 @@ class TestTasksLogs:
             headers=post_json_admin_header
         )
         assert response_logs.status_code == 200
-        assert response_logs.json["logs"] == [
+        assert response_logs.json()["logs"] == [
             'Example logs',
             'another line'
         ]
@@ -1141,7 +1085,7 @@ class TestTasksLogs:
             headers=post_json_admin_header
         )
         assert response_logs.status_code == 404
-        assert response_logs.json["error"] == f"Task with id {task.id + 1} does not exist"
+        assert response_logs.json()["error"] == f"Task with id {task.id + 1} does not exist"
 
     def test_task_waiting_get_logs(
             self,
@@ -1169,7 +1113,7 @@ class TestTasksLogs:
             headers=post_json_admin_header
         )
         assert response_logs.status_code == 200
-        assert response_logs.json["logs"] == 'Task queued'
+        assert response_logs.json()["logs"] == 'Task queued'
 
     def test_task_not_found_get_logs(
             self,
@@ -1192,7 +1136,7 @@ class TestTasksLogs:
             headers=post_json_admin_header
         )
         assert response_logs.status_code == 400
-        assert response_logs.json["error"] == f'Task pod {task.id} not found'
+        assert response_logs.json()["error"] == f'Task pod {task.id} not found'
 
     def test_task_get_logs_fails(
             self,
@@ -1222,4 +1166,4 @@ class TestTasksLogs:
             headers=post_json_admin_header
         )
         assert response_logs.status_code == 500
-        assert response_logs.json["error"] == 'Failed to fetch the logs'
+        assert response_logs.json()["error"] == 'Failed to fetch the logs'

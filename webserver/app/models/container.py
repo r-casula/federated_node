@@ -1,23 +1,24 @@
-from sqlalchemy import Column, Integer, Boolean, String, ForeignKey
-from sqlalchemy.orm import relationship
-from app.helpers.base_model import BaseModel, db
+from sqlalchemy import ForeignKey, Integer, Boolean, String
+from sqlalchemy.orm import Mapped, relationship, mapped_column
+from app.helpers.base_model import BaseModel
 from app.models.registry import Registry
 
 
-class Container(db.Model, BaseModel):
+class Container(BaseModel):# pylint: disable=missing-class-docstring
     __tablename__ = 'containers'
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(256), nullable=False)
-    tag = Column(String(256), nullable=True)
-    sha = Column(String(256), nullable=True)
-    ml = Column(Boolean(), default=False)
-    dashboard = Column(Boolean(), default=False)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    tag: Mapped[str] = mapped_column(String(256), nullable=True)
+    sha: Mapped[str] = mapped_column(String(256), nullable=True)
+    ml: Mapped[bool] = mapped_column(Boolean(), default=False)
+    dashboard: Mapped[bool] = mapped_column(Boolean(), default=False)
 
-    registry_id = Column(Integer, ForeignKey(Registry.id, ondelete='CASCADE'))
-    registry = relationship("Registry")
+    registry_id: Mapped[int] = mapped_column(Integer, ForeignKey(Registry.id, ondelete='CASCADE'))
+    registry: Mapped["Registry"] = relationship("Registry", back_populates="containers")
 
     def full_image_name(self):
+        """Composes the registry/image name:tag or sha"""
         if self.sha:
             return f"{self.registry.url}/{self.name}@{self.sha}"
 

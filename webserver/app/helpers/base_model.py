@@ -1,21 +1,28 @@
+from contextlib import contextmanager
 from datetime import datetime
 from flask import request
-from typing import Self
-from flask_sqlalchemy import SQLAlchemy
+from typing import Any, Generator, Self
 from flask_sqlalchemy.pagination import QueryPagination
-from sqlalchemy import create_engine, Column
-from sqlalchemy.orm import Relationship, declarative_base
+from sqlalchemy import create_engine, Column, select
+from sqlalchemy.orm import DeclarativeBase, Relationship, Session, sessionmaker
 from app.helpers.exceptions import DBRecordNotFoundError, InvalidDBEntry, InvalidRequest
 from app.helpers.const import build_sql_uri
 
 
 engine = create_engine(build_sql_uri())
-Base = declarative_base()
-db = SQLAlchemy(model_class=Base)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+@contextmanager
+def get_db() -> Generator[Session, Any, None]:
+    db: Session = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 # Another helper class for common methods
-class BaseModel():
+class BaseModel(DeclarativeBase):
     @classmethod
     def _query(cls) -> QueryPagination:
         try:
@@ -45,22 +52,32 @@ class BaseModel():
                     jsonized[field] = str(val)
         return jsonized
 
-    def add(self, commit=True):
-        db.session.add(self)
-        db.session.flush()
-        if commit:
-            db.session.commit()
+    def add(self, session: Session, commit:bool=True) -> None:
+        session.add(self)
+        session.commit()
+        session.refresh(self, attribute_names=["id"])
 
-    def delete(self, commit=True):
-        db.session.delete(self)
-        db.session.flush()
+    def update(self, session:Session, data: dict) -> None:
+        """
+        Should help in managing instances created in other sessions
+        """
+        persistent_self = session.merge(self)
+        for key, value in data.items():
+            setattr(persistent_self, key, value)
+
+        session.flush()
+        session.refresh(persistent_self)
+        for key in data:
+            setattr(self, key, getattr(persistent_self, key))
+
+    def delete(self, session:Session, commit=True) -> None:
+        session.delete(self)
         if commit:
-            db.session.commit()
+            session.commit()
 
     @classmethod
-    def get_all(cls) -> list[dict]:
-        obj_list = cls._query()
-        return obj_list
+    def get_all(cls, session) -> list[dict]:
+        return session.execute(select(cls)).scalars().all()
 
     @classmethod
     def _get_fields(cls) -> list[Column]:
@@ -107,12 +124,13 @@ class BaseModel():
         return valid
 
     @classmethod
-    def get_by_id(cls, obj_id:int) -> Self:
+    def get_by_id(cls, session: Session, obj_id:int, raise_if_not_found:bool = True) -> Self:
         """
         Common wrapper to get by id, and raise an
         exception if not found
         """
-        obj = cls.query.filter(cls.id == obj_id).one_or_none()
-        if obj is None:
+        q = select(cls).where(cls.id == obj_id)
+        obj = session.execute(q).scalars().one_or_none()
+        if obj is None and raise_if_not_found:
             raise DBRecordNotFoundError(f"{cls.__name__.capitalize()} with id {obj_id} does not exist")
         return obj
