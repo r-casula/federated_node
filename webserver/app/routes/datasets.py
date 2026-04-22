@@ -10,6 +10,7 @@ datasets-related endpoints:
 - POST /datasets/token_transfer
 - POST /datasets/selection/beacon
 """
+
 import logging
 from http import HTTPStatus
 from typing import Annotated, Any
@@ -30,8 +31,7 @@ from ..models.dataset import Dataset
 from ..models.dictionary import Dictionary
 from ..models.request import RequestModel
 from ..schemas.catalogues import CatalogueRead
-from ..schemas.datasets import (DatasetCreate, DatasetFilters, DatasetRead,
-                                DatasetUpdate)
+from ..schemas.datasets import DatasetCreate, DatasetFilters, DatasetRead, DatasetUpdate
 from ..schemas.dictionaries import DictionaryRead
 from ..schemas.pagination import PageResponse
 from ..schemas.requests import TransferTokenBody
@@ -46,12 +46,12 @@ logger.setLevel(logging.INFO)
 router = APIRouter(tags=["datasets"], prefix="/datasets")
 
 
-@router.get('', dependencies=[Depends(Auth("can_access_dataset"))])
+@router.get("", dependencies=[Depends(Auth("can_access_dataset"))])
 @audit
 async def get_datasets(
     request: Request,
     params: Annotated[DatasetFilters, Query()],
-    session: DBSession = Depends(get_db)
+    session: DBSession = Depends(get_db),
 ) -> dict[str, Any]:
     """
     GET /datasets endpoint. Returns a list of all datasets
@@ -61,15 +61,13 @@ async def get_datasets(
 
 
 @router.post(
-        '',
-        status_code=HTTPStatus.CREATED,
-        dependencies=[Depends(Auth("can_admin_dataset"))],
-    )
+    "",
+    status_code=HTTPStatus.CREATED,
+    dependencies=[Depends(Auth("can_admin_dataset"))],
+)
 @audit
 async def post_datasets(
-    request: Request,
-    body: DatasetCreate,
-    session: DBSession = Depends(get_db)
+    request: Request, body: DatasetCreate, session: DBSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     POST /datasets endpoint. Creates a new dataset
@@ -78,12 +76,10 @@ async def post_datasets(
     return DatasetRead.model_validate(dataset).model_dump()
 
 
-@router.get('/{dataset_identifier}', dependencies=[Depends(Auth("can_access_dataset"))])
+@router.get("/{dataset_identifier}", dependencies=[Depends(Auth("can_access_dataset"))])
 @audit
 async def get_datasets_by_id_or_name(
-    request: Request,
-    dataset_identifier: str,
-    session: DBSession = Depends(get_db)
+    request: Request, dataset_identifier: str, session: DBSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     GET /datasets/id endpoint. Gets dataset with a give id
@@ -98,15 +94,13 @@ async def get_datasets_by_id_or_name(
 
 
 @router.delete(
-        '/{dataset_identifier}',
-        status_code=HTTPStatus.NO_CONTENT,
-        dependencies=[Depends(Auth("can_admin_dataset"))]
-    )
+    "/{dataset_identifier}",
+    status_code=HTTPStatus.NO_CONTENT,
+    dependencies=[Depends(Auth("can_admin_dataset"))],
+)
 @audit
 async def delete_datasets_by_id_or_name(
-    request: Request,
-    dataset_identifier: str,
-    session: DBSession = Depends(get_db)
+    request: Request, dataset_identifier: str, session: DBSession = Depends(get_db)
 ) -> None:
     """
     DELETE /datasets/id endpoint. Deletes the dataset from the db and k8s secrets
@@ -123,16 +117,16 @@ async def delete_datasets_by_id_or_name(
 
 
 @router.patch(
-        '/{dataset_identifier}',
-        status_code=HTTPStatus.ACCEPTED,
-        dependencies=[Depends(Auth("can_admin_dataset"))]
-    )
+    "/{dataset_identifier}",
+    status_code=HTTPStatus.ACCEPTED,
+    dependencies=[Depends(Auth("can_admin_dataset"))],
+)
 @audit
 async def patch_datasets_by_id_or_name(
     request: Request,
     body: DatasetUpdate,
     dataset_identifier: str,
-    session: DBSession = Depends(get_db)
+    session: DBSession = Depends(get_db),
 ) -> dict[str, Any]:
     """
     PATCH /datasets/id endpoint. Edits an existing dataset with a given id
@@ -153,17 +147,14 @@ async def patch_datasets_by_id_or_name(
     ds: Dataset = await DatasetService.update(session, ds, changes)
     # Also make sure all the request clients are updated with this
     if changes.get("name", None) is not None and changes.get("name", None) != old_ds_name:
-        q = select(RequestModel.requested_by, RequestModel.project_name)\
-            .where(
-                RequestModel.dataset_id == ds.id,
-                RequestModel.proj_end > func.now()
-            ).group_by(RequestModel.requested_by, RequestModel.project_name)
+        q = (
+            select(RequestModel.requested_by, RequestModel.project_name)
+            .where(RequestModel.dataset_id == ds.id, RequestModel.proj_end > func.now())
+            .group_by(RequestModel.requested_by, RequestModel.project_name)
+        )
         dars = (await session.execute(q)).all()
         for dar in dars:
-            update_args = {
-                "name": f"{ds.id}-{ds.name}",
-                "displayName": f"{ds.id} - {ds.name}"
-            }
+            update_args = {"name": f"{ds.id}-{ds.name}", "displayName": f"{ds.id} - {ds.name}"}
 
             user = Keycloak().get_user_by_id(dar[0])
             req_by = user["email"]
@@ -174,12 +165,10 @@ async def patch_datasets_by_id_or_name(
     return DatasetRead.model_validate(ds).model_dump()
 
 
-@router.get('/{dataset_identifier}/catalogue', dependencies=[Depends(Auth("can_access_dataset"))])
+@router.get("/{dataset_identifier}/catalogue", dependencies=[Depends(Auth("can_access_dataset"))])
 @audit
 async def get_datasets_catalogue_by_id_or_name(
-    request: Request,
-    dataset_identifier: str,
-    session: DBSession = Depends(get_db)
+    request: Request, dataset_identifier: str, session: DBSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     GET /datasets/dataset_name/catalogue endpoint. Gets dataset's catalogue
@@ -201,14 +190,11 @@ async def get_datasets_catalogue_by_id_or_name(
 
 
 @router.get(
-        '/{dataset_identifier}/dictionaries',
-        dependencies=[Depends(Auth("can_access_dataset"))]
-    )
+    "/{dataset_identifier}/dictionaries", dependencies=[Depends(Auth("can_access_dataset"))]
+)
 @audit
 async def get_datasets_dictionaries_by_id_or_name(
-    request: Request,
-    dataset_identifier: str,
-    session: DBSession = Depends(get_db)
+    request: Request, dataset_identifier: str, session: DBSession = Depends(get_db)
 ) -> list[dict[str, Any]]:
     """
     GET /datasets/dataset_name/dictionaries endpoint.
@@ -231,15 +217,15 @@ async def get_datasets_dictionaries_by_id_or_name(
 
 
 @router.get(
-        '/{dataset_identifier}/dictionaries/{table_name}',
-        dependencies=[Depends(Auth("can_access_dataset"))]
-    )
+    "/{dataset_identifier}/dictionaries/{table_name}",
+    dependencies=[Depends(Auth("can_access_dataset"))],
+)
 @audit
 async def get_datasets_dictionaries_table_by_id_or_name(
     request: Request,
     table_name: str,
     dataset_identifier: str,
-    session: DBSession = Depends(get_db)
+    session: DBSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     """
     GET /datasets/dataset_name/dictionaries/table_name endpoint.
@@ -254,8 +240,7 @@ async def get_datasets_dictionaries_table_by_id_or_name(
     dataset = await Dataset.get_dataset_by_name_or_id(session, **filters)
 
     q = select(Dictionary).where(
-        Dictionary.dataset_id == dataset.id,
-        Dictionary.table_name == table_name
+        Dictionary.dataset_id == dataset.id, Dictionary.table_name == table_name
     )
     dictionary = (await session.execute(q)).scalars().all()
     if not dictionary:
@@ -267,15 +252,13 @@ async def get_datasets_dictionaries_table_by_id_or_name(
 
 
 @router.post(
-        '/token_transfer',
-        status_code=HTTPStatus.CREATED,
-        dependencies=[Depends(Auth("can_transfer_token"))]
-    )
+    "/token_transfer",
+    status_code=HTTPStatus.CREATED,
+    dependencies=[Depends(Auth("can_transfer_token"))],
+)
 @audit
 async def post_transfer_token(
-    request: Request,
-    body: TransferTokenBody,
-    session: DBSession = Depends(get_db)
+    request: Request, body: TransferTokenBody, session: DBSession = Depends(get_db)
 ) -> dict[str, str]:
     """
     POST /datasets/token_transfer endpoint.
@@ -295,12 +278,10 @@ async def post_transfer_token(
         raise
 
 
-@router.post('/selection/beacon', dependencies=[Depends(Auth("can_access_dataset", False))])
+@router.post("/selection/beacon", dependencies=[Depends(Auth("can_access_dataset", False))])
 @audit
 async def select_beacon(
-    body: BeaconPost,
-    request: Request,
-    session: DBSession = Depends(get_db)
+    body: BeaconPost, request: Request, session: DBSession = Depends(get_db)
 ) -> JSONResponse:
     """
     POST /dataset/datasets/selection/beacon endpoint.
@@ -309,11 +290,5 @@ async def select_beacon(
     dataset: Dataset = await Dataset.get_by_id_or_raise(session, body.dataset_id)
 
     if validate(body.query, dataset):
-        return JSONResponse({
-            "query": body.query,
-            "result": "Ok"
-        }, HTTPStatus.OK)
-    return JSONResponse({
-        "query": body.query,
-        "result": "Invalid"
-    }, HTTPStatus.BAD_REQUEST)
+        return JSONResponse({"query": body.query, "result": "Ok"}, HTTPStatus.OK)
+    return JSONResponse({"query": body.query, "result": "Invalid"}, HTTPStatus.BAD_REQUEST)

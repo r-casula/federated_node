@@ -24,9 +24,15 @@ class TaskService:
         user = kc_client.get_user_by_id(data.requested_by)
         task_definition: dict[str, Any] = data.model_dump()
         if data.repository:
-            ds: Dataset | None = (await session.execute(
-                select(Dataset).where(Dataset.repository.ilike(data.repository))
-            )).scalars().one_or_none()
+            ds: Dataset | None = (
+                (
+                    await session.execute(
+                        select(Dataset).where(Dataset.repository.ilike(data.repository))
+                    )
+                )
+                .scalars()
+                .one_or_none()
+            )
             if ds is None:
                 raise InvalidRequest(f"No datasets linked with the repository {data.repository}")
 
@@ -44,11 +50,9 @@ class TaskService:
                     "Administrators need to provide `tags.dataset_id` or `tags.dataset_name`"
                 )
         else:
-            task_definition["dataset"] = (await RequestModel.get_active_project(
-                session,
-                data["project_name"],
-                user["id"]
-            )).dataset
+            task_definition["dataset"] = (
+                await RequestModel.get_active_project(session, data["project_name"], user["id"])
+            ).dataset
 
         image: Container = await Task.get_image_with_repo(
             session, data.docker_image, string_only=False

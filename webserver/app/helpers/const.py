@@ -5,26 +5,23 @@ from .settings import settings
 
 
 def build_sql_uri(
-    username=None,
-    password=None,
-    host=None,
-    port=None,
-    database=None,
-    with_async: bool = False
+    username=None, password=None, host=None, port=None, database=None, with_async: bool = False
 ):
     driver = "postgresql"
     if with_async:
         driver += "+asyncpg"
-    return f"{driver}://{username or settings.pguser}:" \
-        f"{quote_plus(password or settings.pgpassword)}" \
-        f"@{host or settings.pghost}:{port or settings.pgport}" \
+    return (
+        f"{driver}://{username or settings.pguser}:"
+        f"{quote_plus(password or settings.pgpassword)}"
+        f"@{host or settings.pghost}:{port or settings.pgport}"
         f"/{database or settings.pgdatabase}{settings.dbssl}"
+    )
 
 
 PASS_GENERATOR_SET = string.ascii_letters + string.digits + "!$@#.-_"
 # Pod resource validation constants
-CPU_RESOURCE_REGEX = r'^\d*(m|\.\d+){0,1}$'
-MEMORY_RESOURCE_REGEX = r'^\d*(e\d|(E|P|T|G|M|K)(i*)|k|m)*$'
+CPU_RESOURCE_REGEX = r"^\d*(m|\.\d+){0,1}$"
+MEMORY_RESOURCE_REGEX = r"^\d*(e\d|(E|P|T|G|M|K)(i*)|k|m)*$"
 MEMORY_UNITS = {
     "Ei": 2**60,
     "Pi": 2**50,
@@ -38,6 +35,6 @@ MEMORY_UNITS = {
     "G": 10**9,
     "M": 10**6,
     "k": 10**3,
-    "m": 1000
+    "m": 1000,
 }
 TASK_POD_INPUTS_PATH = "/mnt/inputs"

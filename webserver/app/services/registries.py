@@ -60,11 +60,9 @@ class RegistryService:
             regcred: V1Secret = v1.read_namespaced_secret(
                 registry.slugify_name(), namespace=settings.task_namespace
             )
-            dockerjson = json.loads(
-                v1.decode_secret_value(regcred.data['.dockerconfigjson'])
-            )
-            registry.username = dockerjson['auths'][key]["username"]
-            registry.password = dockerjson['auths'][key]["password"]
+            dockerjson = json.loads(v1.decode_secret_value(regcred.data[".dockerconfigjson"]))
+            registry.username = dockerjson["auths"][key]["username"]
+            registry.password = dockerjson["auths"][key]["password"]
 
             if data.username:
                 registry.username = data.username

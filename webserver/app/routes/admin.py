@@ -24,10 +24,9 @@ from ..schemas.pagination import PageResponse
 router = APIRouter(tags=["admin"])
 
 
-@router.get('/audit', dependencies=[Depends(Auth("can_do_admin"))])
+@router.get("/audit", dependencies=[Depends(Auth("can_do_admin"))])
 async def get_audit_logs(
-    params: Annotated[AuditFilters, Query()],
-    session: Session = Depends(get_db)
+    params: Annotated[AuditFilters, Query()], session: Session = Depends(get_db)
 ) -> dict[str, Any]:
     """
     GET /audit endpoint.
@@ -38,15 +37,13 @@ async def get_audit_logs(
 
 
 @router.patch(
-    '/delivery-secret',
+    "/delivery-secret",
     status_code=HTTPStatus.NO_CONTENT,
-    dependencies=[Depends(Auth("can_do_admin"))]
+    dependencies=[Depends(Auth("can_do_admin"))],
 )
 @audit
 async def update_delivery_secret(
-    request: Request,
-    body: DeliverySecretPost,
-    session: Session = Depends(get_db)
+    request: Request, body: DeliverySecretPost, session: Session = Depends(get_db)
 ) -> None:
     """
     PATCH /delivery-secret
@@ -71,8 +68,7 @@ async def update_delivery_secret(
             label = f"url={settings.other_delivery}"
             secret = None
             for secret in v1_client.list_namespaced_secret(
-                settings.controller_namespace,
-                label_selector=label
+                settings.controller_namespace, label_selector=label
             ).items:
                 break
 

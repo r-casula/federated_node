@@ -15,7 +15,7 @@ from app.models.audit import Audit
 from app.models.dataset import Dataset
 from app.models.request import RequestModel
 
-logger = logging.getLogger('wrappers')
+logger = logging.getLogger("wrappers")
 logger.setLevel(logging.INFO)
 
 
@@ -30,7 +30,7 @@ class Auth:
         dataset_name: str | None = None,
         session: Session = Depends(get_db),
         Authorization: Annotated[str | None, Header()] = None,
-        project_name: Annotated[str | None, Header()] = None
+        project_name: Annotated[str | None, Header()] = None,
     ) -> dict:
         if not Authorization:
             raise AuthenticationError()
@@ -39,22 +39,20 @@ class Auth:
         if self.scope and not token:
             raise AuthenticationError("Token not provided")
 
-        resource = 'endpoints'
-        client = 'global'
-        token_type = 'refresh_token'
+        resource = "endpoints"
+        client = "global"
+        token_type = "refresh_token"
 
         kc_client = Keycloak()
         token_info = kc_client.decode_token(token)
-        user = kc_client.get_user_by_username(token_info['username'])
+        user = kc_client.get_user_by_username(token_info["username"])
 
         if project_name and not kc_client.is_user_admin(token):
             dar: RequestModel = await RequestModel.get_active_project(
                 session, project_name, user["id"]
             )
             if dar.dataset_id:
-                ds = await Dataset.get_dataset_by_name_or_id(
-                    session, obj_id=dar.dataset_id
-                )
+                ds = await Dataset.get_dataset_by_name_or_id(session, obj_id=dar.dataset_id)
                 resource = f"{ds.id}-{ds.name}"
 
         elif self.check_dataset:
@@ -77,7 +75,7 @@ class Auth:
                 client = f"RequestModel {token_info['username']} - {project_name}"
                 kc_client = Keycloak(client)
                 token = kc_client.exchange_global_token(token)
-                token_type = 'access_token'
+                token_type = "access_token"
 
         if kc_client.is_token_valid(token, self.scope, resource, token_type):
             return user
@@ -112,9 +110,9 @@ def audit(func):
 
         audit_body["status_code"] = http_status
 
-        if 'HTTP_X_REAL_IP' in request.headers:
+        if "HTTP_X_REAL_IP" in request.headers:
             # if behind a proxy
-            audit_body["ip_address"] = request.headers['HTTP_X_REAL_IP']
+            audit_body["ip_address"] = request.headers["HTTP_X_REAL_IP"]
         else:
             audit_body["ip_address"] = request.scope["client"][0]
 
@@ -146,6 +144,7 @@ def audit(func):
             raise raised_exception
 
         return response_object
+
     return _audit
 
 
@@ -164,7 +163,7 @@ def find_and_redact_key(obj: dict | str, key: str):
                 if isinstance(item, dict):
                     find_and_redact_key(item, key)
         elif k == key:
-            obj[k] = '*****'
+            obj[k] = "*****"
 
 
 def flatten_dict(to_flatten: dict) -> dict:

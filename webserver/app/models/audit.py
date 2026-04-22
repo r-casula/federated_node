@@ -9,7 +9,7 @@ from app.helpers.base_model import BaseModel
 
 
 class Audit(BaseModel):  # pylint: disable=missing-class-docstring
-    __tablename__ = 'audit'
+    __tablename__ = "audit"
     id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ip_address: MappedColumn[str] = mapped_column(String(256), nullable=False)
     http_method: MappedColumn[str] = mapped_column(String(256), nullable=False)

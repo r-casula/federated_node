@@ -5,6 +5,7 @@ All general configs are taken care in here:
     - Blueprint used
     - pre and post request handlers
 """
+
 import logging
 import traceback
 
@@ -16,11 +17,10 @@ from werkzeug.exceptions import HTTPException
 
 from app.helpers.base_model import SessionLocal
 from app.helpers.exceptions import LogAndException
-from app.routes import (admin, containers, datasets, general, registries,
-                        tasks, users)
+from app.routes import admin, containers, datasets, general, registries, tasks, users
 
 logging.basicConfig(level=logging.WARN)
-logger = logging.getLogger('main')
+logger = logging.getLogger("main")
 logger.setLevel(logging.INFO)
 
 app = FastAPI()
@@ -32,7 +32,7 @@ async def exception_handler(_request, e: Exception) -> JSONResponse:
     extra_fields = getattr(e, "extra_fields", None)
     if extra_fields:
         error_response["details"] = extra_fields
-    return JSONResponse(error_response, status_code=getattr(e, 'code', 500))
+    return JSONResponse(error_response, status_code=getattr(e, "code", 500))
 
 
 app.add_exception_handler(LogAndException, exception_handler)
@@ -58,11 +58,7 @@ async def pydandic_validation_handler(_request, e: RequestValidationError) -> JS
     """Wrapper for error messages on pydantic validation errors"""
     list_of_messages = []
     for err in e.errors():
-        list_of_messages.append({
-            "type": err["type"],
-            "field": err["loc"],
-            "message": err["msg"]
-        })
+        list_of_messages.append({"type": err["type"], "field": err["loc"], "message": err["msg"]})
     return JSONResponse({"error": list_of_messages}, status_code=400)
 
 
@@ -74,6 +70,7 @@ async def unknown_exception_handler(_request, e: Exception) -> JSONResponse:
     async with SessionLocal() as db:
         await db.rollback()
     return JSONResponse({"error": "Internal Error"}, status_code=500)
+
 
 app.include_router(admin.router)
 app.include_router(containers.router)

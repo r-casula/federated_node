@@ -8,10 +8,7 @@ from app.helpers.base_model import BaseModel as DBBaseModel
 
 
 async def apply_filters(
-    db: AsyncSession,
-    model: DBBaseModel,
-    filter_dto: BaseModel,
-    as_pagination: bool = True
+    db: AsyncSession, model: DBBaseModel, filter_dto: BaseModel, as_pagination: bool = True
 ) -> dict[str, Any] | Any:
     """
     We aim to convert query strings in models fields
@@ -59,10 +56,10 @@ async def apply_filters(
     if as_pagination:
         start_idx = filter_dto.per_page * (filter_dto.page - 1)
         return {
-            "items": items[start_idx: start_idx + filter_dto.per_page],
+            "items": items[start_idx : start_idx + filter_dto.per_page],
             "total": total,
             "page": filter_dto.page,
             "per_page": filter_dto.per_page,
-            "pages": (total + filter_dto.per_page - 1) // filter_dto.per_page
+            "pages": (total + filter_dto.per_page - 1) // filter_dto.per_page,
         }
     return query

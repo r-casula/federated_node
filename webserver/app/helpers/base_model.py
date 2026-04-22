@@ -2,8 +2,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, List, Self
 
 from sqlalchemy import Column, select
-from sqlalchemy.ext.asyncio import (AsyncSession, async_sessionmaker,
-                                    create_async_engine)
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.engine import AsyncEngine
 from sqlalchemy.orm import DeclarativeBase, Relationship
 from sqlalchemy.sql.elements import KeyedColumnElement
@@ -95,9 +94,7 @@ class BaseModel(DeclarativeBase):
             - not be a primary key (e.g. id is not allowed as a request body)
         """
         return not (
-            attribute.nullable
-            or attribute.primary_key
-            or attribute.server_default is not None
+            attribute.nullable or attribute.primary_key or attribute.server_default is not None
         )
 
     @classmethod
@@ -114,10 +111,12 @@ class BaseModel(DeclarativeBase):
         valid = data.copy()
         for k, v in data.items():
             field = getattr(cls, k, None)
-            if field is None or \
-               isinstance(v, dict) or \
-               isinstance(v, list) or \
-               isinstance(field.property, Relationship):
+            if (
+                field is None
+                or isinstance(v, dict)
+                or isinstance(v, list)
+                or isinstance(field.property, Relationship)
+            ):
                 continue
             if getattr(cls, k).nullable:
                 valid[k] = v
@@ -125,7 +124,7 @@ class BaseModel(DeclarativeBase):
                 raise InvalidDBEntry(f"Field {k} has invalid value")
         for req_field in cls._get_required_fields():
             if req_field not in list(valid.keys()):
-                raise InvalidDBEntry(f"Field \"{req_field}\" missing")
+                raise InvalidDBEntry(f'Field "{req_field}" missing')
         return valid
 
     @classmethod

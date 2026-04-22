@@ -15,10 +15,9 @@ class Catalogue(BaseModel):
     """
     Catalogue model
     """
-    __tablename__ = 'catalogues'
-    __table_args__ = (
-        UniqueConstraint('title', 'dataset_id'),
-    )
+
+    __tablename__ = "catalogues"
+    __table_args__ = (UniqueConstraint("title", "dataset_id"),)
     id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     version: MappedColumn[str] = mapped_column(String(256))
     title: MappedColumn[str] = mapped_column(String(256), nullable=False)
@@ -31,6 +30,6 @@ class Catalogue(BaseModel):
     )
 
     dataset_id: MappedColumn[Any] = mapped_column(
-        Integer, ForeignKey(Dataset.id, ondelete='CASCADE')
+        Integer, ForeignKey(Dataset.id, ondelete="CASCADE")
     )
     dataset: Mapped["Dataset"] = relationship("Dataset")

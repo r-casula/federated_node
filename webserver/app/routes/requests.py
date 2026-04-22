@@ -4,6 +4,7 @@ request-related endpoints:
 - POST /requests
 - GET /code/approve
 """
+
 import json
 from http import HTTPStatus
 from typing import Any
@@ -21,9 +22,7 @@ from app.schemas.requests import TransferTokenBody
 router = APIRouter(tags=["requests"], prefix="/requests")
 
 
-@router.get('',
-            dependencies=[Depends(Auth("can_admin_request"))],
-            deprecated=True)
+@router.get("", dependencies=[Depends(Auth("can_admin_request"))], deprecated=True)
 @audit
 async def get_requests(request: Request, session: DBSession = Depends(get_db)) -> list:
     """
@@ -37,17 +36,15 @@ async def get_requests(request: Request, session: DBSession = Depends(get_db)) -
 
 # Disabled for the time being, also disable the pylint rule for duplicated code
 @router.post(
-        '',
-        dependencies=[Depends(Auth("can_send_request"))],
-        status_code=HTTPStatus.CREATED,
-        deprecated=True
-    )
+    "",
+    dependencies=[Depends(Auth("can_send_request"))],
+    status_code=HTTPStatus.CREATED,
+    deprecated=True,
+)
 # pylint: disable=R0801
 @audit
 async def post_requests(
-    request: Request,
-    body: TransferTokenBody,
-    session: DBSession = Depends(get_db)
+    request: Request, body: TransferTokenBody, session: DBSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     POST /requests/ endpoint. Creates a new Data Access RequestModel
@@ -65,7 +62,7 @@ async def post_requests(
     except KeyError as kexc:
         await session.rollback()
         raise InvalidRequest(
-            "Missing field. Make sure \"catalogue\" and \"dictionary\" entries are there"
+            'Missing field. Make sure "catalogue" and "dictionary" entries are there'
         ) from kexc
     except Exception:
         await session.rollback()
@@ -74,11 +71,11 @@ async def post_requests(
 
 # Disabled for the time being, also disable the pylint rule for duplicated code
 @router.post(
-        '/{code}/approve',
-        dependencies=[Depends(Auth("can_admin_request"))],
-        status_code=HTTPStatus.CREATED,
-        deprecated=True
-    )
+    "/{code}/approve",
+    dependencies=[Depends(Auth("can_admin_request"))],
+    status_code=HTTPStatus.CREATED,
+    deprecated=True,
+)
 # pylint: disable=R0801
 @audit
 async def post_approve_requests(code: int, request: Request, session: DBSession) -> dict[str, str]:

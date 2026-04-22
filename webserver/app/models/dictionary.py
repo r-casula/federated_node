@@ -11,10 +11,8 @@ from app.models.dataset import Dataset
 
 
 class Dictionary(BaseModel):  # pylint: disable=missing-class-docstring
-    __tablename__ = 'dictionaries'
-    __table_args__ = (
-        UniqueConstraint('table_name', 'dataset_id', 'field_name'),
-    )
+    __tablename__ = "dictionaries"
+    __table_args__ = (UniqueConstraint("table_name", "dataset_id", "field_name"),)
     id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     table_name: MappedColumn[str] = mapped_column(String(256), nullable=False)
     field_name: MappedColumn[str] = mapped_column(String(256), nullable=False)
@@ -28,6 +26,6 @@ class Dictionary(BaseModel):  # pylint: disable=missing-class-docstring
     )
 
     dataset_id: MappedColumn[int] = mapped_column(
-        Integer, ForeignKey(Dataset.id, ondelete='CASCADE')
+        Integer, ForeignKey(Dataset.id, ondelete="CASCADE")
     )
     dataset: Mapped["Dataset"] = relationship("Dataset")

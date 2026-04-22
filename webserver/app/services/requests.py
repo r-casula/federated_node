@@ -19,7 +19,7 @@ class RequestService:
         q = select(RequestModel).where(
             RequestModel.project_name == data.project_name,
             RequestModel.proj_end >= func.now(),
-            RequestModel.requested_by == data.requested_by
+            RequestModel.requested_by == data.requested_by,
         )
         overlaps = (await session.execute(q)).scalars().all()
 

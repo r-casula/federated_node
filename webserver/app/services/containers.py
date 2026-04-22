@@ -21,18 +21,18 @@ class ContainerService:
         if reg is None:
             raise ContainerRegistryException(f"Registry {data.registry} could not be found")
 
-        q = select(Container).where(
-            Container.name == data.name,
-            Registry.id == reg.id
-        ).filter(
-            (Container.tag == data.tag) & (Container.sha == data.sha)
-        ).join(Registry)
+        q = (
+            select(Container)
+            .where(Container.name == data.name, Registry.id == reg.id)
+            .filter((Container.tag == data.tag) & (Container.sha == data.sha))
+            .join(Registry)
+        )
         existing_image = (await session.execute(q)).scalars().one_or_none()
 
         if existing_image:
             raise InvalidRequest(
                 f"Image {data.name} with {data.tag or data.sha} already exists in the registry",
-                409
+                409,
             )
         container_definition["registry_id"] = reg.id
         container_definition["registry"] = reg

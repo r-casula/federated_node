@@ -8,8 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.helpers.base_model import BaseModel
-from app.helpers.connection_string import (MariaDB, Mssql, Mysql, Oracle,
-                                           Postgres)
+from app.helpers.connection_string import MariaDB, Mssql, Mysql, Oracle, Postgres
 from app.helpers.exceptions import DBRecordNotFoundError, InvalidRequest
 from app.helpers.kubernetes import KubernetesClient
 from app.helpers.settings import settings
@@ -26,12 +25,12 @@ SUPPORTED_ENGINES = {
     "postgres": Postgres,
     "mysql": Mysql,
     "oracle": Oracle,
-    "mariadb": MariaDB
+    "mariadb": MariaDB,
 }
 
 
 class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
-    __tablename__ = 'datasets'
+    __tablename__ = "datasets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
@@ -48,13 +47,10 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
         back_populates="dataset",
         uselist=False,
         cascade="all, delete-orphan",
-        lazy='selectin'
+        lazy="selectin",
     )
     dictionaries: Mapped[List["Dictionary"]] = relationship(
-        "Dictionary",
-        back_populates="dataset",
-        cascade="all, delete-orphan",
-        lazy='selectin'
+        "Dictionary", back_populates="dataset", cascade="all, delete-orphan", lazy="selectin"
     )
 
     def __init__(self, **kwargs):
@@ -79,7 +75,7 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
     @property
     def slug(self):
         """Slugify the name for url purposes"""
-        return re.sub(r'[\W_]+', '-', self.name)
+        return re.sub(r"[\W_]+", "-", self.name)
 
     @property
     def url(self) -> str:
@@ -91,7 +87,7 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
         host = host or self.host
         name = name or self.name
 
-        cleaned_up_host = re.sub('http(s)*://', '', host)
+        cleaned_up_host = re.sub("http(s)*://", "", host)
         return f"{cleaned_up_host}-{re.sub('\\s|_|#', '-', name.lower())}-creds"
 
     def get_connection_string(self):
@@ -105,7 +101,7 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
             host=self.host,
             port=self.port,
             database=self.name,
-            args=self.extra_connection_args
+            args=self.extra_connection_args,
         ).connection_str
 
     def get_credentials(self) -> tuple:
@@ -115,12 +111,12 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
         """
         v1 = KubernetesClient()
         secret: V1Secret = v1.read_namespaced_secret(
-            self.get_creds_secret_name(), settings.default_namespace, pretty='pretty'
+            self.get_creds_secret_name(), settings.default_namespace, pretty="pretty"
         )
         # Doesn't matter which key it's being picked up, the value it's the same
         # in terms of *USER or *PASSWORD
-        user = KubernetesClient.decode_secret_value(secret.data['PGUSER'])
-        password = KubernetesClient.decode_secret_value(secret.data['PGPASSWORD'])
+        user = KubernetesClient.decode_secret_value(secret.data["PGUSER"])
+        password = KubernetesClient.decode_secret_value(secret.data["PGPASSWORD"])
 
         return user, password
 
@@ -130,7 +126,7 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
         session: AsyncSession,
         obj_id: int = None,
         name: str = "",
-        raise_if_not_found: bool = True
+        raise_if_not_found: bool = True,
     ) -> Self:
         """
         Common function to get a dataset by name or id.
@@ -144,7 +140,7 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
             DBRecordNotFoundError: if no record is found
         """
         if obj_id and name:
-            error_msg = f"Dataset \"{name}\" with id {obj_id} does not exist"
+            error_msg = f'Dataset "{name}" with id {obj_id} does not exist'
             q = select(cls).where((cls.name.ilike(name or "") & (cls.id == obj_id)))
 
         else:
@@ -160,4 +156,4 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
         return dataset
 
     def __repr__(self):
-        return f'<Dataset {self.name}>'
+        return f"<Dataset {self.name}>"

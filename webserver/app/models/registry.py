@@ -11,8 +11,12 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
 
 from app.helpers.base_model import BaseModel
-from app.helpers.container_registries import (AzureRegistry, BaseRegistry,
-                                              DockerRegistry, GitHubRegistry)
+from app.helpers.container_registries import (
+    AzureRegistry,
+    BaseRegistry,
+    DockerRegistry,
+    GitHubRegistry,
+)
 from app.helpers.exceptions import ContainerRegistryException, InvalidRequest
 from app.helpers.kubernetes import KubernetesClient
 from app.helpers.settings import settings
@@ -25,7 +29,7 @@ logger.setLevel(logging.INFO)
 
 
 class Registry(BaseModel):  # pylint: disable=missing-class-docstring
-    __tablename__ = 'registries'
+    __tablename__ = "registries"
 
     id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     url: MappedColumn[str] = mapped_column(String(256), nullable=False)
@@ -33,9 +37,7 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
     active: MappedColumn[bool] = mapped_column(Boolean, default=True)
 
     containers: Mapped[List["Container"]] = relationship(
-        "Container",
-        back_populates="registry",
-        cascade="all, delete-orphan"
+        "Container", back_populates="registry", cascade="all, delete-orphan"
     )
 
     def __init__(self, **kwargs):
@@ -44,7 +46,7 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
         super().__init__(**kwargs)
 
     def _get_name(self):
-        return re.sub('^http(s{,1})://', '', self.url)
+        return re.sub("^http(s{,1})://", "", self.url)
 
     def update_regcred(self):
         """
@@ -67,7 +69,7 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
                     name=secret_name,
                     values={".dockerconfigjson": json.dumps({"auths": {}})},
                     namespaces=[settings.task_namespace],
-                    type='kubernetes.io/dockerconfigjson'
+                    type="kubernetes.io/dockerconfigjson",
                 )
                 secret: V1Secret = v1.read_namespaced_secret(secret_name, settings.task_namespace)
             else:
@@ -75,16 +77,16 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
                     "Something went wrong when creating registry secrets"
                 ) from apie
 
-        dockerjson = json.loads(v1.decode_secret_value(secret.data['.dockerconfigjson']))
-        dockerjson['auths'] = {
+        dockerjson = json.loads(v1.decode_secret_value(secret.data[".dockerconfigjson"]))
+        dockerjson["auths"] = {
             key: {
                 "username": self.username,
                 "password": self.password,
                 "email": "",
-                "auth": v1.encode_secret_value(f"{self.username}:{self.password}")
+                "auth": v1.encode_secret_value(f"{self.username}:{self.password}"),
             }
         }
-        secret.data['.dockerconfigjson'] = v1.encode_secret_value(json.dumps(dockerjson))
+        secret.data[".dockerconfigjson"] = v1.encode_secret_value(json.dumps(dockerjson))
         v1.patch_namespaced_secret(
             namespace=settings.task_namespace, name=secret_name, body=secret
         )
@@ -100,7 +102,7 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
         Based on the provided name, it will return the slugified name
         so that it will be sade to save on the DB
         """
-        return re.sub(r'[\W_]+', '-', self._get_name())
+        return re.sub(r"[\W_]+", "-", self._get_name())
 
     def get_registry_class(self) -> BaseRegistry:
         """
@@ -108,20 +110,17 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
         image tag parsers. Based on the registry name
         infers the appropriate class
         """
-        args = {
-            "registry": self._get_name(),
-            "creds": self._get_creds()
-        }
+        args = {"registry": self._get_name(), "creds": self._get_creds()}
         if self.id:
             args["secret_name"] = self.slugify_name()
-        matches = re.search(r'azurecr\.io|ghcr\.io', self.url)
+        matches = re.search(r"azurecr\.io|ghcr\.io", self.url)
 
-        matches = '' if matches is None else matches.group()
+        matches = "" if matches is None else matches.group()
 
         match matches:
-            case 'azurecr.io':
+            case "azurecr.io":
                 return AzureRegistry(**args)
-            case 'ghcr.io':
+            case "ghcr.io":
                 return GitHubRegistry(**args)
             case _:
                 return DockerRegistry(**args)

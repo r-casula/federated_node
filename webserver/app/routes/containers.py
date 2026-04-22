@@ -6,6 +6,7 @@ containers endpoints:
 - PATCH /containers/<id>
 - POST /registries
 """
+
 import logging
 from http import HTTPStatus
 from typing import Annotated, Any
@@ -21,23 +22,27 @@ from app.helpers.query_filters import apply_filters
 from app.helpers.wrappers import Auth, audit
 from app.models.container import Container
 from app.models.registry import Registry
-from app.schemas.containers import (ContainerCreate, ContainerFilters,
-                                    ContainerRead, ContainerUpdate)
+from app.schemas.containers import (
+    ContainerCreate,
+    ContainerFilters,
+    ContainerRead,
+    ContainerUpdate,
+)
 from app.schemas.pagination import PageResponse
 from app.services.containers import ContainerService
 
-logger = logging.getLogger('containers_api')
+logger = logging.getLogger("containers_api")
 logger.setLevel(logging.INFO)
 
 router = APIRouter(tags=["containers"], prefix="/containers")
 
 
-@router.get('', dependencies=[Depends(Auth("can_do_admin"))])
+@router.get("", dependencies=[Depends(Auth("can_do_admin"))])
 @audit
 async def get_all_containers(
     request: Request,
     params: Annotated[ContainerFilters, Query()],
-    session: Session = Depends(get_db)
+    session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     """
     GET /containers endpoint.
@@ -47,15 +52,10 @@ async def get_all_containers(
     return PageResponse[ContainerRead].model_validate(pagination).model_dump()
 
 
-@router.post('',
-             dependencies=[Depends(Auth("can_do_admin"))],
-             status_code=HTTPStatus.CREATED
-             )
+@router.post("", dependencies=[Depends(Auth("can_do_admin"))], status_code=HTTPStatus.CREATED)
 @audit
 async def add_image(
-    request: Request,
-    body: ContainerCreate,
-    session: DBSession = Depends(get_db)
+    request: Request, body: ContainerCreate, session: DBSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     POST /containers endpoint.
@@ -65,12 +65,10 @@ async def add_image(
     return ContainerRead.model_validate(image).model_dump()
 
 
-@router.get('/{image_id}', dependencies=[Depends(Auth("can_do_admin"))])
+@router.get("/{image_id}", dependencies=[Depends(Auth("can_do_admin"))])
 @audit
 async def get_image_by_id(
-    request: Request,
-    image_id: int,
-    session: DBSession = Depends(get_db)
+    request: Request, image_id: int, session: DBSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     GET /containers/<image_id>
@@ -83,16 +81,11 @@ async def get_image_by_id(
 
 
 @router.patch(
-        '/{image_id}',
-        dependencies=[Depends(Auth("can_do_admin"))],
-        status_code=HTTPStatus.CREATED
-    )
+    "/{image_id}", dependencies=[Depends(Auth("can_do_admin"))], status_code=HTTPStatus.CREATED
+)
 @audit
 async def patch_containers_by_id_or_name(
-    request: Request,
-    image_id: int,
-    body: ContainerUpdate,
-    session: DBSession = Depends(get_db)
+    request: Request, image_id: int, body: ContainerUpdate, session: DBSession = Depends(get_db)
 ):
     """
     PATCH /containers/id endpoint. Edits an existing container image with a given id
@@ -105,10 +98,7 @@ async def patch_containers_by_id_or_name(
     await container.update(session, changes)
 
 
-@router.post('/sync',
-             dependencies=[Depends(Auth("can_do_admin"))],
-             status_code=HTTPStatus.CREATED
-             )
+@router.post("/sync", dependencies=[Depends(Auth("can_do_admin"))], status_code=HTTPStatus.CREATED)
 @audit
 async def sync(request: Request, session: DBSession = Depends(get_db)) -> dict[str, Any]:
     """
@@ -130,17 +120,14 @@ async def sync(request: Request, session: DBSession = Depends(get_db)) -> dict[s
                         select(Container).where(
                             Container.name == image["name"],
                             getattr(Container, key) == tag_or_sha,
-                            Container.registry_id == registry.id
+                            Container.registry_id == registry.id,
                         )
                     )
                     if images_query.scalars().one_or_none():
                         logger.info("Image %s already synched", image["name"])
                         continue
 
-                    container_data = {
-                        "name": image["name"],
-                        "registry": registry.url
-                    }
+                    container_data = {"name": image["name"], "registry": registry.url}
                     if key == "tag":
                         container_data["tag"] = tag_or_sha
                     else:
@@ -156,6 +143,6 @@ async def sync(request: Request, session: DBSession = Depends(get_db)) -> dict[s
     await session.commit()
     return {
         "info": "The sync considers only the latest 100 tag per image. If an older one is needed,"
-                " add it manually via the POST /images endpoint",
-        "images": [syn.full_image_name() for syn in synched]
+        " add it manually via the POST /images endpoint",
+        "images": [syn.full_image_name() for syn in synched],
     }

@@ -19,7 +19,7 @@ class ContainerBase(BaseModel):
 class ContainerCreate(ContainerBase):
     registry: str
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def extract_fields(cls, data: dict):
         if not (data.get("tag") or data.get("sha")):
@@ -34,8 +34,8 @@ class ContainerCreate(ContainerBase):
     @classmethod
     def validate_image_format(cls, img_with_tag, img_with_sha):
         if not (
-            re.match(r'^\w[\w\.\-/]+\w:[\w\.\-]+$', img_with_tag) or
-            re.match(r'^\w[\w\.\-/]+\w@sha256:[a-fA-F0-9]{64}$', img_with_sha)
+            re.match(r"^\w[\w\.\-/]+\w:[\w\.\-]+$", img_with_tag)
+            or re.match(r"^\w[\w\.\-/]+\w@sha256:[a-fA-F0-9]{64}$", img_with_sha)
         ):
             raise InvalidRequest(
                 f"{img_with_tag} does not have a tag or is malformed. "

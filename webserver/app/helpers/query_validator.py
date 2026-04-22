@@ -4,6 +4,7 @@ At the current state we support:
     - postgresql
     - MS SQL
 """
+
 import logging
 import re
 
@@ -16,7 +17,7 @@ from app.helpers.const import build_sql_uri
 from app.helpers.exceptions import DBError
 from app.models.dataset import Dataset
 
-logger = logging.getLogger('query_validator')
+logger = logging.getLogger("query_validator")
 logger.setLevel(logging.INFO)
 
 
@@ -27,18 +28,16 @@ def connect_to_dataset(dataset: Dataset) -> Session | pymssql.Cursor | None:
     """
     user, passw = dataset.get_credentials()
     if dataset.type == "postgres":
-        engine = create_engine(build_sql_uri(
-            host=re.sub('http(s)*://', '', dataset.host),
-            port=dataset.port,
-            username=user,
-            password=passw,
-            database=dataset.name
-        ))
-        session = sessionmaker(
-            autocommit=False,
-            autoflush=False,
-            bind=engine
+        engine = create_engine(
+            build_sql_uri(
+                host=re.sub("http(s)*://", "", dataset.host),
+                port=dataset.port,
+                username=user,
+                password=passw,
+                database=dataset.name,
+            )
         )
+        session = sessionmaker(autocommit=False, autoflush=False, bind=engine)
         return session()
     elif dataset.type == "mssql":
         conn = pymssql.connect(
@@ -56,7 +55,7 @@ def validate(query: str, dataset: Dataset) -> bool:
         session: Session | pymssql.Cursor | None = connect_to_dataset(dataset)
         if dataset.type == "postgres":
             # Read only query, so things like UPDATE, DELETE or DROP won't be executed
-            session.execute(text('SET TRANSACTION READ ONLY'))
+            session.execute(text("SET TRANSACTION READ ONLY"))
             session.execute(text(query)).all()
         if dataset.type == "mssql":
             session.execute(query)

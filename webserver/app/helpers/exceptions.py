@@ -14,7 +14,7 @@ class LogAndException(HTTPException):
         message: str = "",
         code=None,
         description: str | None = None,
-        response: Response | None = None
+        response: Response | None = None,
     ) -> None:
         traceback.print_exc()
         self.description = message or getattr(self, "description") or description
@@ -69,6 +69,7 @@ class TaskCRDExecutionException(LogAndException):
     Another benefit is that CRD validation happens at k8s level
     and we can just pick info up and be sure is accurate.
     """
+
     details = "Could not activate automatic delivery"
 
     def __init__(self, description=None, code=None, response=None):

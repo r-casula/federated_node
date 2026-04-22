@@ -26,12 +26,12 @@ class DatasetCreate(DatasetBase):
     catalogue: Optional[CatalogueCreate] = None
     dictionaries: List[DictionaryCreate] = Field(default_factory=list)
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def sanitize_name(cls, v: str) -> str:
         return requests.utils.unquote(v).lower()
 
-    @field_validator('type')
+    @field_validator("type")
     @classmethod
     def validate_type(cls, v: str) -> str:
         if v.lower() not in SUPPORTED_ENGINES:
