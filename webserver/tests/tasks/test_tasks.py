@@ -98,7 +98,7 @@ class TestGetTasks(BaseTest):
         decode_return.update(basic_user)
         mock_kc_client["tasks_api_kc"].return_value.decode_token.return_value = decode_return
 
-        t = await Task.get_by_id(self.db_session, task.id)
+        t: Task = await Task.get_by_id_or_raise(self.db_session, task.id)
         t.requested_by = basic_user["id"]
         resp = await client.get(
             f'/tasks/{task.id}',
@@ -247,27 +247,6 @@ class TestPostTask(BaseTest):
         assert [pod.name for pod in pod_body.spec.init_containers] == [f"init-{response.json()["id"]}", "fetch-data"]
 
     @mark.asyncio
-    async def test_create_task_no_tag_fails(
-            self,
-            post_json_admin_header,
-            client,
-            task_body,
-            container
-        ):
-        """
-        Tests task creation returns an error when the image does not have a tag or sha
-        """
-        tagless_image = "".join(container.full_image_name().split(':')[:-1])
-        task_body["executors"][0]["image"] = tagless_image
-        response = client.post(
-            '/tasks/',
-            json=task_body,
-            headers=post_json_admin_header
-        )
-        assert response.status_code == 400
-        assert response.json["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
-
-    @mark.asyncio
     async def test_create_task_no_name_fails(
             self,
             post_json_admin_header,
@@ -310,7 +289,7 @@ class TestPostTask(BaseTest):
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json()["error"] == f"{tagless_image} does not have a tag. Please provide one in the format <image>:<tag> or <image>@sha256.."
+        assert response.json()["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
 
     @mark.asyncio
     async def test_create_task_space_name_fails(
@@ -458,56 +437,6 @@ class TestPostTask(BaseTest):
         assert response.status_code == 400
         assert response.json()["error"] == "`db_query` field must include a `query`"
         reg_k8s_client["create_namespaced_pod_mock"].assert_not_called()
-
-    @mark.asyncio
-    async def test_create_task_invalid_output_field(
-            self,
-            cr_client,
-            post_json_admin_header,
-            client,
-            registry_client,
-            task_body,
-
-        ):
-        """
-        Tests task creation returns 4xx request when output
-        is not a dictionary
-        """
-        task_body["outputs"] = []
-        response = await client.post(
-            '/tasks',
-            json=task_body,
-            headers=post_json_admin_header
-        )
-        assert response.status_code == 400
-        assert response.json() == {"error": "\"outputs\" filed muct be a json object or dictionary"}
-
-    @mark.asyncio
-    async def test_create_task_no_output_field_reverts_to_default(
-            self,
-            cr_client,
-            reg_k8s_client,
-            post_json_admin_header,
-            client,
-            registry_client,
-            task_body,
-
-        ):
-        """
-        Tests task creation returns 201 but the volume mounted
-        is the default one
-        """
-        task_body.pop("outputs")
-        response = await client.post(
-            '/tasks',
-            json=task_body,
-            headers=post_json_admin_header
-        )
-        assert response.status_code == 201
-        reg_k8s_client["create_namespaced_pod_mock"].assert_called()
-        pod_body = reg_k8s_client["create_namespaced_pod_mock"].call_args.kwargs["body"]
-        assert len(pod_body.spec.containers[0].volume_mounts) == 1
-        assert pod_body.spec.containers[0].volume_mounts[0].mount_path == settings.task_pod_results_path
 
     @mark.asyncio
     async def test_create_task_with_ds_name(

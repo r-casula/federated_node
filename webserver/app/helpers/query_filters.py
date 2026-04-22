@@ -1,17 +1,18 @@
 from typing import Any
 
-from sqlalchemy import func, DateTime, select
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy import DateTime, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.helpers.base_model import BaseModel as DBBaseModel
 
 
 async def apply_filters(
-        db: Session,
-        model: DBBaseModel,
-        filter_dto: BaseModel,
-        as_pagination:bool = True
-    )-> dict[str, Any] | Any:
+    db: AsyncSession,
+    model: DBBaseModel,
+    filter_dto: BaseModel,
+    as_pagination: bool = True
+) -> dict[str, Any] | Any:
     """
     We aim to convert query strings in models fields
     to be used as filters.
@@ -26,15 +27,17 @@ async def apply_filters(
     """
     query = select(model)
     # filter_dto.model_dump(exclude_none=True) gives us only what the user sent
-    filters: dict[str, Any] = filter_dto.model_dump(exclude={"page", "per_page"}, exclude_none=True)
+    filters: dict[str, Any] = filter_dto.model_dump(
+        exclude={"page", "per_page"}, exclude_none=True
+    )
 
     operators = {
         "lte": lambda col, val: col <= val,
         "gte": lambda col, val: col >= val,
-        "gt":  lambda col, val: col > val,
-        "lt":  lambda col, val: col < val,
-        "ne":  lambda col, val: col != val,
-        "eq":  lambda col, val: col == val,
+        "gt": lambda col, val: col > val,
+        "lt": lambda col, val: col < val,
+        "ne": lambda col, val: col != val,
+        "eq": lambda col, val: col == val,
     }
 
     for key, value in filters.items():

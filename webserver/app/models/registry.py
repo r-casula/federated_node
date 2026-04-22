@@ -1,19 +1,21 @@
 import json
 import logging
 import re
-from typing import NoReturn
+from typing import TYPE_CHECKING, Any, List
+
+from kubernetes.client import V1Secret
 from kubernetes.client.exceptions import ApiException
-from sqlalchemy import Integer, String, Boolean
+from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import TYPE_CHECKING, List
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
 
-from app.helpers.settings import settings
-from app.helpers.container_registries import AzureRegistry, BaseRegistry, DockerRegistry, GitHubRegistry
 from app.helpers.base_model import BaseModel
+from app.helpers.container_registries import (AzureRegistry, BaseRegistry,
+                                              DockerRegistry, GitHubRegistry)
 from app.helpers.exceptions import ContainerRegistryException, InvalidRequest
 from app.helpers.kubernetes import KubernetesClient
+from app.helpers.settings import settings
 
 if TYPE_CHECKING:
     from .container import Container
@@ -22,7 +24,7 @@ logger = logging.getLogger("registry_model")
 logger.setLevel(logging.INFO)
 
 
-class Registry(BaseModel):
+class Registry(BaseModel):  # pylint: disable=missing-class-docstring
     __tablename__ = 'registries'
 
     id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -50,7 +52,7 @@ class Registry(BaseModel):
         is created.
         """
         v1 = KubernetesClient()
-        secret_name:str = self.slugify_name()
+        secret_name: str = self.slugify_name()
         dockerjson = {}
 
         key = self.url
@@ -63,13 +65,15 @@ class Registry(BaseModel):
             if apie.status == 404:
                 v1.create_secret(
                     name=secret_name,
-                    values={".dockerconfigjson": json.dumps({"auths" : {}})},
+                    values={".dockerconfigjson": json.dumps({"auths": {}})},
                     namespaces=[settings.task_namespace],
                     type='kubernetes.io/dockerconfigjson'
                 )
-                secret = v1.read_namespaced_secret(secret_name, settings.task_namespace)
+                secret: V1Secret = v1.read_namespaced_secret(secret_name, settings.task_namespace)
             else:
-                raise InvalidRequest("Something went wrong when creating registry secrets")
+                raise InvalidRequest(
+                    "Something went wrong when creating registry secrets"
+                ) from apie
 
         dockerjson = json.loads(v1.decode_secret_value(secret.data['.dockerconfigjson']))
         dockerjson['auths'] = {
@@ -81,11 +85,15 @@ class Registry(BaseModel):
             }
         }
         secret.data['.dockerconfigjson'] = v1.encode_secret_value(json.dumps(dockerjson))
-        v1.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret)
+        v1.patch_namespaced_secret(
+            namespace=settings.task_namespace, name=secret_name, body=secret
+        )
 
-    def _get_creds(self):
+    def _get_creds(self) -> dict[str, Any] | None:
+        """Private method to return a dict of credentials"""
         if hasattr(self, "username") and hasattr(self, "password"):
             return {"user": self.username, "token": self.password}
+        return None
 
     def slugify_name(self) -> str:
         """
@@ -105,7 +113,7 @@ class Registry(BaseModel):
             "creds": self._get_creds()
         }
         if self.id:
-            args["secret_name"]= self.slugify_name()
+            args["secret_name"] = self.slugify_name()
         matches = re.search(r'azurecr\.io|ghcr\.io', self.url)
 
         matches = '' if matches is None else matches.group()
@@ -126,12 +134,14 @@ class Registry(BaseModel):
         _class: BaseRegistry = self.get_registry_class()
         return _class.list_repos()
 
-    async def delete(self, session: AsyncSession) -> NoReturn:
+    async def delete(self, session: AsyncSession, _commit: bool = True) -> None:
         async with session.begin_nested() as nested:
             await super().delete(session, False)
             v1 = KubernetesClient()
             try:
-                v1.delete_namespaced_secret(namespace=settings.task_namespace, name=self.slugify_name())
+                v1.delete_namespaced_secret(
+                    namespace=settings.task_namespace, name=self.slugify_name()
+                )
             except ApiException as apie:
                 await nested.rollback()
                 logger.error("%s:\n\tDetails: %s", apie.reason, apie.body)

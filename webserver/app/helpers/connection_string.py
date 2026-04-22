@@ -2,15 +2,16 @@ class BaseEngine:
     driver = ""
 
     def __init__(
-            self,
-            user:str,
-            passw:str,
-            host:str,
-            port:str,
-            database:str,
-            args:str
-        ):
-        self.connection_str = f"{self.driver};Uid={user};Pwd={passw};Server={host},{port};Database={database};{args or ''}"
+        self,
+        user: str,
+        passw: str,
+        host: str,
+        port: str,
+        database: str,
+        args: str
+    ):
+        self.connection_str = f"{self.driver};Uid={user};Pwd={passw};" \
+            f"Server={host},{port};Database={database};{args or ''}"
 
 
 class Mssql(BaseEngine):
@@ -29,17 +30,17 @@ class Oracle(BaseEngine):
     driver = "driver={Oracle ODBC Driver}"
 
     def __init__(
-            self,
-            user:str,
-            passw:str,
-            host:str,
-            port:str,
-            database:str,
-            args:str
-        ):
-        self.connection_str = f"{self.driver};Uid={user};PSW={passw};DBQ={host}:{port}/{database};{args or ''}"
+        self,
+        user: str,
+        passw: str,
+        host: str,
+        port: str,
+        database: str,
+        args: str
+    ):
+        self.connection_str = f"{self.driver};Uid={user};PSW={passw};" \
+            f"DBQ={host}:{port}/{database};{args or ''}"
 
 
 class MariaDB(BaseEngine):
     driver = "driver={MariaDB ODBC 3.2 Driver};"
-

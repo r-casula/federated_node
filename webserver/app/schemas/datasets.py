@@ -1,14 +1,11 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List, Optional
 
 import requests
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from sqlalchemy import select
-
-from app.models.dataset import SUPPORTED_ENGINES, Dataset
+from app.models.dataset import SUPPORTED_ENGINES
 from app.schemas.catalogues import CatalogueCreate
 from app.schemas.dictionaries import DictionaryCreate
-from app.helpers.base_model import get_db
 
 
 class DatasetBase(BaseModel):

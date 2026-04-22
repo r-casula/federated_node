@@ -5,12 +5,14 @@ These won't have any restrictions and won't go through
 """
 from http import HTTPStatus
 from typing import Annotated
-import requests
-from fastapi.responses import JSONResponse, RedirectResponse
-from fastapi import APIRouter, Request as request, Form
-from app.helpers.keycloak import Keycloak, URLS
-from app.helpers.exceptions import AuthenticationError
 
+import requests
+from fastapi import APIRouter, Form
+from fastapi import Request as request
+from fastapi.responses import JSONResponse, RedirectResponse
+
+from app.helpers.exceptions import AuthenticationError
+from app.helpers.keycloak import URLS, Keycloak
 
 router = APIRouter(tags=["general"])
 
@@ -23,6 +25,7 @@ async def index():
     """
     return RedirectResponse(url='health_check')
 
+
 @router.get('/ready_check')
 async def ready_check():
     """
@@ -30,6 +33,7 @@ async def ready_check():
         Mostly to tell k8s Flask has started
     """
     return {"status": "ready"}
+
 
 @router.get('/health_check')
 async def health_check():
@@ -55,6 +59,7 @@ async def health_check():
         status_code=code
     )
 
+
 @router.post('/login')
 async def login(username: Annotated[str, Form()], password: Annotated[str, Form()]):
     """
@@ -64,14 +69,16 @@ async def login(username: Annotated[str, Form()], password: Annotated[str, Form(
     return {
         "token": Keycloak().get_token(**{"username": username, "password": password})
     }
+
+
 @router.post('/refresh_token')
-async def refresh_token():
+async def refresh_token(request: request):
     """
     POST /refresh_token endpoint.
         Given a token, exchanges it for a new one. Returns the same
         response as /login
     """
-    token = Keycloak.get_token_from_headers()
+    token = Keycloak.get_token_from_headers(request)
     kc_client = Keycloak()
     if not kc_client.is_token_valid(token, resource=None, scope=None, with_permissions=False):
         raise AuthenticationError()

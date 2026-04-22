@@ -1,39 +1,40 @@
-import json
 import logging
-import os
 import random
 import re
-from fastapi import Request
-import requests
 from base64 import b64encode
+
+import requests
+from fastapi import Response
 from flask import request
 
-from app.helpers.exceptions import AuthenticationError, UnauthorizedError, KeycloakError
 from app.helpers.const import PASS_GENERATOR_SET
+from app.helpers.exceptions import (AuthenticationError, KeycloakError,
+                                    UnauthorizedError)
 from app.helpers.settings import kc_settings
-
 
 logger: logging.Logger = logging.getLogger('keycloak_helper')
 logger.setLevel(logging.INFO)
-
+BASE_URL = f"{kc_settings.keycloak_url}/realms/{kc_settings.realm}"
+ADMIN_URL = f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}"
 URLS: dict[str, str] = {
     "health_check": f"{kc_settings.keycloak_url}/realms/master",
-    "get_token": f"{kc_settings.keycloak_url}/realms/{kc_settings.realm}/protocol/openid-connect/token",
-    "validate": f"{kc_settings.keycloak_url}/realms/{kc_settings.realm}/protocol/openid-connect/token/introspect",
-    "client": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients",
-    "client_secret": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients/%s/client-secret",
-    "client_exchange": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients/%s/management/permissions",
-    "client_auth": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients/%s/authz/resource-server",
-    "roles": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/roles",
-    "policies": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients/%s/authz/resource-server/policy",
-    "scopes": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients/%s/authz/resource-server/scope",
-    "resource": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients/%s/authz/resource-server/resource",
-    "permission": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients/%s/authz/resource-server/permission/scope",
-    "permissions_check": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/clients/%s/authz/resource-server/policy/evaluate",
-    "user": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/users",
-    "user_role": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/users/%s/role-mappings/realm",
-    "user_reset": f"{kc_settings.keycloak_url}/admin/realms/{kc_settings.realm}/users/%s/reset-password"
+    "get_token": f"{BASE_URL}/protocol/openid-connect/token",
+    "validate": f"{BASE_URL}/protocol/openid-connect/token/introspect",
+    "client": f"{ADMIN_URL}/clients",
+    "client_secret": f"{ADMIN_URL}/clients/%s/client-secret",
+    "client_exchange": f"{ADMIN_URL}/clients/%s/management/permissions",
+    "client_auth": f"{ADMIN_URL}/clients/%s/authz/resource-server",
+    "roles": f"{ADMIN_URL}/roles",
+    "policies": f"{ADMIN_URL}/clients/%s/authz/resource-server/policy",
+    "scopes": f"{ADMIN_URL}/clients/%s/authz/resource-server/scope",
+    "resource": f"{ADMIN_URL}/clients/%s/authz/resource-server/resource",
+    "permission": f"{ADMIN_URL}/clients/%s/authz/resource-server/permission/scope",
+    "permissions_check": f"{ADMIN_URL}/clients/%s/authz/resource-server/policy/evaluate",
+    "user": f"{ADMIN_URL}/users",
+    "user_role": f"{ADMIN_URL}/users/%s/role-mappings/realm",
+    "user_reset": f"{ADMIN_URL}/users/%s/reset-password"
 }
+
 
 class Keycloak:
     def __init__(self, client='global') -> None:
@@ -43,7 +44,7 @@ class Keycloak:
         self.client_secret = self._get_client_secret()
 
     @classmethod
-    def get_token_from_headers(cls, request:Request) -> str:
+    def get_token_from_headers(cls) -> str:
         """
         Public method for generalize the token fetching from an HTTP header
         """
@@ -58,7 +59,7 @@ class Keycloak:
             "Content-Type": "application/json"
         }
 
-    def exchange_global_token(self, token:str, type:str="access_token") -> str:
+    def exchange_global_token(self, token: str, type: str = "access_token") -> str:
         """
         Token exchange across clients. From global to the instanced one
         """
@@ -100,14 +101,14 @@ class Keycloak:
             raise KeycloakError("Cannot exchange token")
         return exchange_resp.json()[type]
 
-    def get_impersonation_token(self, user_id:str) -> str:
+    def get_impersonation_token(self, user_id: str) -> str:
         """
         Method to request a token on behalf of another user
         : user_id : The keycloak user's id to impersonate
         """
         payload = {
-            'client_secret': kc_settings.keycloak_secret, # Target client
-            'client_id': kc_settings.keycloak_client, #Target client
+            'client_secret': kc_settings.keycloak_secret,  # Target client
+            'client_id': kc_settings.keycloak_client,  # Target client
             'grant_type': 'urn:ietf:params:oauth:grant-type:token-exchange',
             'requested_token_type': 'urn:ietf:params:oauth:token-type:refresh_token',
             'subject_token': self.get_admin_token_global(),
@@ -135,7 +136,7 @@ class Keycloak:
         """
         return response.status_code == 409 or response.ok
 
-    def _get_client_secret(self, client_id:str=None) -> str:
+    def _get_client_secret(self, client_id: str = None) -> str:
         """
         Given the client id, fetches the client's secret if has one.
         """
@@ -154,7 +155,14 @@ class Keycloak:
 
         return secret_resp.json()["value"]
 
-    def get_token(self, username=None, password=None, token_type='refresh_token', payload:dict=None, raise_on_temp_pass:bool=True) -> str:
+    def get_token(
+        self,
+        username=None,
+        password=None,
+        token_type='refresh_token',
+        payload: dict = None,
+        raise_on_temp_pass: bool = True
+    ) -> str | Response:
         """
         Get a token for a given set of credentials
 
@@ -188,13 +196,16 @@ class Keycloak:
         if not response_auth.ok:
             logger.info(response_auth.content.decode())
 
-            if re.match("Account is not fully set up", response_auth.json().get("error_description")):
+            if re.match(
+                "Account is not fully set up",
+                response_auth.json().get("error_description")
+            ):
                 raise AuthenticationError("Temporary password must be changed before logging in")
 
             raise AuthenticationError("Failed to login")
         return response_auth.json()[token_type]
 
-    def is_user_admin(self, token:str) -> bool:
+    def is_user_admin(self, token: str) -> bool:
         """
         Given a token checks if the owner is an Admin or SuperAdmin
         """
@@ -205,7 +216,7 @@ class Keycloak:
                 "client_id": self.client_name,
                 "token": token
             },
-            headers = {
+            headers={
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         )
@@ -240,7 +251,14 @@ class Keycloak:
         }
         return self.get_token(token_type='access_token', payload=payload)
 
-    def is_token_valid(self, token:str, scope:str, resource:str, tok_type='refresh_token', with_permissions:bool=True) -> bool:
+    def is_token_valid(
+        self,
+        token: str,
+        scope: str,
+        resource: str,
+        tok_type='refresh_token',
+        with_permissions: bool = True
+    ) -> bool:
         """
         Ping KC to check if the token is valid or not
         """
@@ -253,7 +271,7 @@ class Keycloak:
                     "client_id": self.client_name,
                     "token": token
                 },
-                headers = {
+                headers={
                     'Content-Type': 'application/x-www-form-urlencoded'
                 }
             )
@@ -266,16 +284,17 @@ class Keycloak:
                     "grant_type": tok_type,
                     tok_type: token
                 },
-                headers = {
+                headers={
                     'Content-Type': 'application/x-www-form-urlencoded'
                 }
             )
         if with_permissions:
-            return response_auth.ok and self.check_permissions(token, scope, resource, is_access_token)
+            return response_auth.ok and \
+                self.check_permissions(token, scope, resource, is_access_token)
 
         return response_auth.ok
 
-    def decode_token(self, token:str) -> dict:
+    def decode_token(self, token: str) -> dict:
         """
         Simple token decode, mostly to fetch user general info or exp date
         """
@@ -298,7 +317,7 @@ class Keycloak:
         Get a give Keycloak client id, if not provided, the instanced
         one will be returned
         """
-        headers={
+        headers = {
             'Authorization': f'Bearer {self.admin_token}'
         }
         if client_name is None:
@@ -306,7 +325,7 @@ class Keycloak:
 
         client_id_resp = requests.get(
             URLS["client"],
-            params = {"clientId": client_name},
+            params={"clientId": client_name},
             headers=headers
         )
         if not client_id_resp.ok:
@@ -317,7 +336,7 @@ class Keycloak:
 
         return client_id_resp.json()[0]["id"]
 
-    def _access_from_refresh(self, token:str) -> str:
+    def _access_from_refresh(self, token: str) -> str:
         """
         Simply exchanges the refresh token for an access token
         """
@@ -331,11 +350,13 @@ class Keycloak:
             token_type='access_token'
         )
 
-    def check_permissions(self, token:str, scope:str, resource:str, is_access_token=False) -> bool:
+    def check_permissions(
+        self, token: str, scope: str, resource: str, is_access_token=False
+    ) -> bool:
         if not is_access_token:
             token = self._access_from_refresh(token)
 
-        headers={
+        headers = {
             'Authorization': f'Bearer {token}',
             'Content-Type': 'application/x-www-form-urlencoded',
         }
@@ -355,7 +376,7 @@ class Keycloak:
             raise UnauthorizedError("User is not authorized")
         return True
 
-    def get_role(self, role_name:str) -> dict[str, str]:
+    def get_role(self, role_name: str) -> dict[str, str]:
         """
         Get the realm roles.
 
@@ -379,8 +400,8 @@ class Keycloak:
                 logger.info(realm_resp.content.decode())
                 raise KeycloakError("Failed to fetch roles")
 
-    def get_resource(self, resource_name:str) -> dict:
-        headers={
+    def get_resource(self, resource_name: str) -> dict:
+        headers = {
             'Authorization': f'Bearer {self.admin_token}'
         }
         response_res = requests.get(
@@ -398,7 +419,7 @@ class Keycloak:
 
         raise KeycloakError("Failed to fetch the resource")
 
-    def patch_resource(self, resource_name:str, **kwargs) -> dict:
+    def patch_resource(self, resource_name: str, **kwargs) -> dict:
         """
         Given a resource name submits a PUT request by using the
         current resource body merged with what's been passed trough
@@ -411,7 +432,7 @@ class Keycloak:
         resource = self.get_resource(resource_name)
         resource.update(kwargs)
 
-        headers={
+        headers = {
             'Authorization': f'Bearer {self.admin_token}'
         }
         response_res = requests.put(
@@ -423,12 +444,12 @@ class Keycloak:
             logger.info(response_res.content.decode())
             raise KeycloakError("Failed to patch the resource")
 
-    def get_policy(self, name:str) -> dict:
+    def get_policy(self, name: str) -> dict:
         """
         Given a name and (optional) reosource (global or dataset specific)
         return a policy dict
         """
-        headers={
+        headers = {
             'Authorization': f'Bearer {self.admin_token}'
         }
         policy_response = requests.get(
@@ -442,12 +463,12 @@ class Keycloak:
 
         return policy_response.json()[0]
 
-    def get_scope(self, name:str) -> dict:
+    def get_scope(self, name: str) -> dict:
         """
         Given a name and (optional) reosource (global or dataset specific)
         return a policy dict
         """
-        headers={
+        headers = {
             'Authorization': f'Bearer {self.admin_token}'
         }
         scope_response = requests.get(
@@ -464,7 +485,7 @@ class Keycloak:
 
         return scope_response.json()[0]
 
-    def create_client(self, client_name:str, token_lifetime:int) -> dict:
+    def create_client(self, client_name: str, token_lifetime: int) -> dict:
         """
         Create a new client for a given project. If it exist already,
             return that one
@@ -521,7 +542,7 @@ class Keycloak:
 
         return scope_post_rest.json()
 
-    def create_policy(self, payload:dict, policy_type:str) -> dict:
+    def create_policy(self, payload: dict, policy_type: str) -> dict:
         """
         Creates a custom policy for a resource
         """
@@ -539,7 +560,7 @@ class Keycloak:
 
         return policy_response.json()
 
-    def create_or_update_time_policy(self, payload:dict, policy_type:str) -> dict:
+    def create_or_update_time_policy(self, payload: dict, policy_type: str) -> dict:
         """
         Time policies need a separate treatement. This is the only policy that we will
         allow to be updated, in cases of token renewals via DAR
@@ -561,7 +582,7 @@ class Keycloak:
 
         return current_policy
 
-    def create_resource(self, payload:dict, client_name='global') -> dict:
+    def create_resource(self, payload: dict, client_name='global') -> dict:
         payload["owner"] = {
             "id": self.client_id, "name": client_name
         }
@@ -578,7 +599,7 @@ class Keycloak:
 
         return resource_response.json()
 
-    def create_permission(self, payload:dict) -> dict:
+    def create_permission(self, payload: dict) -> dict:
         permission_response = requests.post(
             URLS["permission"] % self.client_id,
             json=payload,
@@ -590,7 +611,7 @@ class Keycloak:
 
         return permission_response.json()
 
-    ### USERS' section
+    # USERS' section
     def create_user(self, set_temp_pass=False, **kwargs) -> dict:
         """
         Method that handles the user creation. Keycloak will need username as
@@ -635,13 +656,14 @@ class Keycloak:
 
         return user_info
 
-    def assign_role_to_user(self, user_id:str, role:str|dict ="Users"):
+    def assign_role_to_user(self, user_id: str, role: str | dict = "Users"):
         """
         Keycloak REST API can't handle role assignation to a user on creation
         has to be a separate call.
 
         :param user_id: a string representing the user_id from keycloak
-        :param role: either a string with the role name, or a dictionary that contains role's name and id
+        :param role: either a string with the role name, or a dictionary
+                that contains role's name and id
         """
         if isinstance(role, str):
             role = self.get_role(role)
@@ -667,7 +689,7 @@ class Keycloak:
 
         return user_response.json()
 
-    def get_user(self, username:str) -> dict:
+    def get_user(self, username: str) -> dict:
         """
         Method to return a dictionary representing a Keycloak user,
         checks for both username and email
@@ -682,13 +704,13 @@ class Keycloak:
 
         raise KeycloakError("Failed to fetch the created user")
 
-    def get_user_by_username(self, username:str) -> dict:
+    def get_user_by_username(self, username: str) -> dict:
         """
         Method to return a dictionary representing a Keycloak user
         """
         user_response = requests.get(
             URLS["user"],
-            params= {
+            params={
                 "username": username,
                 "exact": True
             },
@@ -699,14 +721,14 @@ class Keycloak:
 
         return user_response.json()[0] if user_response.json() else None
 
-    def get_user_by_email(self, email:str) -> dict:
+    def get_user_by_email(self, email: str) -> dict:
         """
         Method to return a dictionary representing a Keycloak user,
         using their email
         """
         user_response = requests.get(
             URLS["user"],
-            params= {
+            params={
                 "email": email,
                 "exact": True
             },
@@ -717,7 +739,7 @@ class Keycloak:
 
         return user_response.json()[0] if user_response.json() else None
 
-    def get_user_by_id(self, user_id:str) -> dict:
+    def get_user_by_id(self, user_id: str) -> dict:
         """
         Method to return a dictionary representing a Keycloak user,
         using their id
@@ -731,7 +753,7 @@ class Keycloak:
 
         return user_response.json() if user_response.json() else None
 
-    def get_user_role(self, user_id:str) -> list[str]:
+    def get_user_role(self, user_id: str) -> list[str]:
         """
         From a user id, get all of their realm roles
         """
@@ -744,21 +766,25 @@ class Keycloak:
 
         return [role["name"] for role in role_response.json()]
 
-    def has_user_roles(self, user_id:str, roles:set) -> bool:
+    def has_user_roles(self, user_id: str, roles: set) -> bool:
         """
         With the user id checks if it has certain realm roles
         """
         return roles.intersection(self.get_user_role(user_id))
 
-    def reset_user_pass(self, user_id:str, username:str, old_pass:str, new_pass:str):
+    def reset_user_pass(self, user_id: str, username: str, old_pass: str, new_pass: str):
         """
         Simply change the temp password for the user.
         The old_pass will be used to check if a change is needed,
             if that's the case, we'll update the password
         """
-        auth_user = self.get_token(username=username, password=old_pass, raise_on_temp_pass=False)
+        auth_user: str | Response = self.get_token(
+            username=username, password=old_pass, raise_on_temp_pass=False
+        )
 
-        if not re.match("Account is not fully set up", auth_user.json().get("error_description", "")):
+        if not re.match(
+            "Account is not fully set up", auth_user.json().get("error_description", "")
+        ):
             raise AuthenticationError("Incorrect credentials")
 
         res_pass_resp = requests.put(
@@ -782,7 +808,7 @@ class Keycloak:
         client_permission_resp = requests.put(
             URLS["client_exchange"] % self.client_id,
             json={"enabled": True},
-            headers = self._post_json_headers()
+            headers=self._post_json_headers()
         )
         if not client_permission_resp.ok:
             raise KeycloakError("Failed to set exchange permissions")
@@ -793,11 +819,11 @@ class Keycloak:
         # Fetching the token exchange scope
         client_te_scope_resp = requests.get(
             URLS["scopes"] % rm_client_id,
-            params = {
+            params={
                 "permission": False,
                 "name": "token-exchange"
             },
-            headers = {
+            headers={
                 'Authorization': f'Bearer {self.admin_token}'
             }
         )
@@ -807,10 +833,10 @@ class Keycloak:
         token_exch_scope = client_te_scope_resp.json()[0]["id"]
         resource_scope_resp = requests.get(
             URLS["resource"] % rm_client_id,
-            params = {
+            params={
                 "name": f"client.resource.{self.client_id}"
             },
-            headers = {
+            headers={
                 'Authorization': f'Bearer {self.admin_token}'
             }
         )
@@ -824,29 +850,31 @@ class Keycloak:
                 "logic": "POSITIVE",
                 "clients": [global_client_id, self.client_id]
             },
-            headers = self._post_json_headers()
+            headers=self._post_json_headers()
         )
         if global_client_policy_resp.status_code == 409:
             global_policy_id = requests.get(
                 (URLS["policies"] % rm_client_id) + "/client",
-                params = {
+                params={
                     "name": f"token-exchange-{self.client_name}"
                 },
-                headers = self._post_json_headers()
+                headers=self._post_json_headers()
             ).json()[0]["id"]
         elif not global_client_policy_resp.ok:
             logger.error(global_client_policy_resp.json())
-            raise KeycloakError("Something went wrong in creating the set of permissions on Keycloak")
+            raise KeycloakError(
+                "Something went wrong in creating the set of permissions on Keycloak"
+            )
         else:
             global_policy_id = global_client_policy_resp.json()["id"]
 
         token_exch_name = f"token-exchange.permission.client.{self.client_id}"
         token_exch_permission_resp = requests.get(
             URLS["permission"] % rm_client_id,
-            params = {
+            params={
                 "name": token_exch_name
             },
-            headers = {
+            headers={
                 'Authorization': f'Bearer {self.admin_token}'
             }
         )
@@ -862,7 +890,7 @@ class Keycloak:
                 "policies": [global_policy_id],
                 "scopes": [token_exch_scope]
             },
-            headers = self._post_json_headers()
+            headers=self._post_json_headers()
         )
         if not client_permission_resp.ok:
             raise KeycloakError("Failed to update the exchange permission")

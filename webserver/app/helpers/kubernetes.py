@@ -1,13 +1,15 @@
 import base64
-import os
 import logging
+import os
 import shutil
 import tarfile
 from tempfile import TemporaryFile
+
 from kubernetes import client, config
-from kubernetes.stream import stream
 from kubernetes.client.exceptions import ApiException
+from kubernetes.stream import stream
 from kubernetes.watch import Watch
+
 from app.helpers.exceptions import InvalidRequest, KubernetesException
 from app.helpers.settings import settings
 
@@ -26,7 +28,7 @@ class KubernetesBase:
         super().__init__()
 
     @classmethod
-    def encode_secret_value(cls, value:str) -> str:
+    def encode_secret_value(cls, value: str) -> str:
         """
         Given a plain text secret it will perform the
         base64 encoding
@@ -34,7 +36,7 @@ class KubernetesBase:
         return base64.b64encode(value.encode()).decode()
 
     @classmethod
-    def decode_secret_value(cls, value:str) -> str:
+    def decode_secret_value(cls, value: str) -> str:
         """
         Given a plain text secret it will perform the
         base64 decoding
@@ -47,7 +49,7 @@ class KubernetesBase:
         """
         return [client.V1EnvFromSource(secret_ref=client.V1SecretEnvSource(name=secret_name))]
 
-    def create_job_spec(self, pod_spec:dict):
+    def create_job_spec(self, pod_spec: dict):
         """
         Given a dictionary with a job config deconstruct it
         and assemble it with the different sdk objects
@@ -59,7 +61,9 @@ class KubernetesBase:
             volumes.append(
                 client.V1Volume(
                     name=pvc["vol_name"],
-                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(claim_name=pvc["name"])
+                    persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                        claim_name=pvc["name"]
+                    )
                 )
             )
             vol_mounts.append(client.V1VolumeMount(
@@ -101,7 +105,7 @@ class KubernetesBase:
             spec=specs
         )
 
-    def delete_pod(self, name:str, namespace=settings.task_namespace):
+    def delete_pod(self, name: str, namespace=settings.task_namespace):
         """
         Given a pod name, delete it. If it doesn't exist
         ignores the exception and logs a message.
@@ -115,7 +119,7 @@ class KubernetesBase:
             if e.status != 404:
                 raise InvalidRequest(f"Failed to delete pod {name}: {e.reason}") from e
 
-    def delete_job(self, name:str, namespace=settings.task_namespace):
+    def delete_job(self, name: str, namespace=settings.task_namespace):
         """
         Given a pod name, delete it. If it doesn't exist
         ignores the exception and logs a message.
@@ -129,7 +133,9 @@ class KubernetesBase:
             if e.status != 404:
                 raise InvalidRequest(f"Failed to delete pod {name}: {e.reason}") from e
 
-    def create_persistent_storage(self, task_pv:client.V1PersistentVolume, task_pvc:client.V1PersistentVolumeClaim):
+    def create_persistent_storage(
+        self, task_pv: client.V1PersistentVolume, task_pvc: client.V1PersistentVolumeClaim
+    ):
         """
         Function to dynamically create (if doesn't already exist)
         a PV and its PVC
@@ -141,12 +147,21 @@ class KubernetesBase:
             if kexc.status != 409:
                 raise KubernetesException(kexc.body) from kexc
         try:
-            self.create_namespaced_persistent_volume_claim(namespace=settings.task_namespace, body=task_pvc)
+            self.create_namespaced_persistent_volume_claim(
+                namespace=settings.task_namespace, body=task_pvc
+            )
         except ApiException as kexc:
             if kexc.status != 409:
                 raise KubernetesException(kexc.body) from kexc
 
-    def cp_from_pod(self, pod_name:str, source_path:str, dest_path:str, out_name:str, namespace=settings.task_namespace):
+    def cp_from_pod(
+        self,
+        pod_name: str,
+        source_path: str,
+        dest_path: str,
+        out_name: str,
+        namespace=settings.task_namespace
+    ) -> str:
         """
         Method that emulates the `kubectl cp` command
         """
@@ -203,6 +218,7 @@ class KubernetesBase:
 
         return f"{results_file_archive}.zip"
 
+
 class KubernetesClient(KubernetesBase, client.CoreV1Api):
     def is_pod_ready(self, label):
         """
@@ -221,7 +237,14 @@ class KubernetesClient(KubernetesBase, client.CoreV1Api):
                 return
             logger.info(f"Pod is in state {event["object"].status.phase}")
 
-    def create_secret(self, name:str, values:dict[str, str], namespaces:list, type:str='Opaque', labels:dict={}) -> client.V1Secret:
+    def create_secret(
+        self,
+        name: str,
+        values: dict[str, str],
+        namespaces: list,
+        type: str = 'Opaque',
+        labels: dict = {}
+    ) -> client.V1Secret:
         """
         From a dict of values, encodes them,
             and creates a secret in a given list of namespace
@@ -250,6 +273,7 @@ class KubernetesClient(KubernetesBase, client.CoreV1Api):
 
 class KubernetesBatchClient(KubernetesBase, client.BatchV1Api):
     pass
+
 
 class KubernetesCRDClient(KubernetesBase, client.CustomObjectsApi):
     pass

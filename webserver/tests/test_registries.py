@@ -374,7 +374,7 @@ class TestDeleteRegistries(BaseTest):
             headers=simple_admin_header
         )
         assert response.status_code == 500
-        assert await Registry.get_by_id(self.db_session, reg_id, raise_if_not_found=False) is not None
+        assert await Registry.get_by_id(self.db_session, reg_id) is not None
 
     @mark.asyncio
     async def test_delete_cascade_containers(
@@ -406,7 +406,7 @@ class TestDeleteRegistries(BaseTest):
             headers=simple_admin_header
         )
         assert response.status_code == 204
-        assert await Registry.get_by_id(self.db_session, reg_id, raise_if_not_found=False) is None
+        assert await Registry.get_by_id(self.db_session, reg_id) is None
         assert await self.run_query(select(func.count(Container.id)).where(
             Container.name=="newimage", Container.registry_id==reg_id
             ), "one") == 0

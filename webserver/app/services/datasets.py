@@ -1,23 +1,27 @@
 from typing import List
+
+from fastapi import Request
 from kubernetes.client import V1Secret
 from kubernetes.client.exceptions import ApiException
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.helpers.settings import settings
-from app.helpers.kubernetes import KubernetesClient
-from app.models.dataset import Dataset
-from app.schemas.datasets import DatasetCreate, DatasetUpdate
-from app.helpers.keycloak import Keycloak
-from app.models.catalogue import Catalogue
-from app.models.dictionary import Dictionary
 from app.helpers.exceptions import InvalidRequest, KubernetesException
+from app.helpers.keycloak import Keycloak
+from app.helpers.kubernetes import KubernetesClient
+from app.helpers.settings import settings
+from app.models.catalogue import Catalogue
+from app.models.dataset import Dataset
+from app.models.dictionary import Dictionary
+from app.schemas.datasets import DatasetCreate
 
 
 class DatasetService:
     @staticmethod
-    async def add(session: AsyncSession, data: DatasetCreate) -> Dataset:
-        if await Dataset.get_dataset_by_name_or_id(session=session, name=data.name, raise_if_not_found=False):
+    async def add(session: AsyncSession, request: Request, data: DatasetCreate) -> Dataset:
+        if await Dataset.get_dataset_by_name_or_id(
+            session=session, name=data.name, raise_if_not_found=False
+        ):
             raise InvalidRequest("Dataset already exist with that name")
 
         if data.repository:
@@ -26,11 +30,12 @@ class DatasetService:
             )).one_or_none()
             if existing_link:
                 raise InvalidRequest(
-                    "Repository is already linked to another dataset. Please PATCH that dataset with repository: null"
+                    "Repository is already linked to another dataset. "
+                    "Please PATCH that dataset with repository: null"
                 )
 
         kc_client = Keycloak()
-        token_info = kc_client.decode_token(kc_client.get_token_from_headers())
+        token_info = kc_client.decode_token(kc_client.get_token_from_headers(request))
         user_id = kc_client.get_user_by_email(token_info["email"])["id"]
 
         dataset_data = data.model_dump(exclude={'catalogue', 'dictionaries'})
@@ -84,7 +89,8 @@ class DatasetService:
             })
             kc_client.create_permission({
                 "name": f"{dataset.id}-{dataset.name} Admin Permission",
-                "description": "List of policies that will allow certain users or roles to administrate the dataset",
+                "description": "List of policies that will allow certain users "
+                               "or roles to administrate the dataset",
                 "type": "resource",
                 "logic": "POSITIVE",
                 "decisionStrategy": "AFFIRMATIVE",
@@ -101,7 +107,7 @@ class DatasetService:
             raise e
 
     @staticmethod
-    async def update(session: AsyncSession, ds:Dataset, data: DatasetUpdate) -> Dataset:
+    async def update(session: AsyncSession, ds: Dataset, data: dict) -> Dataset:
         """
         Updates the instance with new values. These should be
         already validated.
@@ -145,8 +151,12 @@ class DatasetService:
                         ds.dictionaries.append(Dictionary(**d))
 
         # Get existing secret
-        secret: V1Secret = v1.read_namespaced_secret(secret_name, settings.default_namespace, pretty='pretty')
-        secret_task: V1Secret = v1.read_namespaced_secret(secret_name, settings.task_namespace, pretty='pretty')
+        secret: V1Secret = v1.read_namespaced_secret(
+            secret_name, settings.default_namespace, pretty='pretty'
+        )
+        secret_task: V1Secret = v1.read_namespaced_secret(
+            secret_name, settings.task_namespace, pretty='pretty'
+        )
 
         # Update secret if credentials are provided
         new_username = data.pop("username", None)
@@ -170,12 +180,18 @@ class DatasetService:
                 secret_task.metadata = secret.metadata
                 secret.metadata.resource_version = None
                 v1.create_namespaced_secret(settings.default_namespace, body=secret, pretty='true')
-                v1.create_namespaced_secret(settings.task_namespace, body=secret_task, pretty='true')
+                v1.create_namespaced_secret(
+                    settings.task_namespace, body=secret_task, pretty='true'
+                )
                 v1.delete_namespaced_secret(namespace=settings.default_namespace, name=secret_name)
                 v1.delete_namespaced_secret(namespace=settings.task_namespace, name=secret_name)
             else:
-                v1.patch_namespaced_secret(namespace=settings.default_namespace, name=secret_name, body=secret)
-                v1.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret_task)
+                v1.patch_namespaced_secret(
+                    namespace=settings.default_namespace, name=secret_name, body=secret
+                )
+                v1.patch_namespaced_secret(
+                    namespace=settings.task_namespace, name=secret_name, body=secret_task
+                )
         except ApiException as e:
             # Host and name are unique so there shouldn't be duplicates. If so
             # let the exception to be re-raised with the internal one
@@ -190,13 +206,16 @@ class DatasetService:
             kc_client.patch_resource(f"{ds.id}-{ds.name}", **update_args)
 
         if data.get("repository"):
-            data["repository"] = data.get("repository").lower()
-            existing_link = await session.execute(
-                select(Dataset).filter(Dataset.repository == data["repository"], Dataset.id != ds.id)
-            ).one_or_none()
+            data["repository"] = data["repository"].lower()
+            existing_link = (await session.execute(
+                select(Dataset).filter(
+                    Dataset.repository == data["repository"], Dataset.id != ds.id
+                )
+            )).one_or_none()
             if existing_link:
                 raise InvalidRequest(
-                    "Repository is already linked to another dataset. Please PATCH that dataset with repository: null"
+                    "Repository is already linked to another dataset. "
+                    "Please PATCH that dataset with repository: null"
                 )
         # Update table
         if data:

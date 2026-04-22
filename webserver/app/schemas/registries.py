@@ -1,10 +1,6 @@
 from typing import Optional
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
-from sqlalchemy import select
 
-from app.helpers.exceptions import InvalidRequest
-from app.models.registry import Registry
-from app.helpers.base_model import get_db
+from pydantic import BaseModel, ConfigDict
 
 
 class RegistryBase(BaseModel):

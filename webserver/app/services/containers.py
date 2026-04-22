@@ -1,17 +1,19 @@
 from typing import Any
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.container import Container
-from app.schemas.containers import ContainerCreate
-from app.models.registry import Registry
 from app.helpers.exceptions import ContainerRegistryException, InvalidRequest
+from app.models.container import Container
+from app.models.registry import Registry
+from app.schemas.containers import ContainerCreate
 
 
 class ContainerService:
     @staticmethod
-    async def add(session: Session, data: ContainerCreate, dry_run:bool=False) -> Container:
+    async def add(
+        session: AsyncSession, data: ContainerCreate, dry_run: bool = False
+    ) -> Container:
         container_definition: dict[str, Any] = data.model_dump()
 
         q = select(Registry).where(Registry.url == data.registry)
@@ -23,7 +25,7 @@ class ContainerService:
             Container.name == data.name,
             Registry.id == reg.id
         ).filter(
-            (Container.tag==data.tag) & (Container.sha==data.sha)
+            (Container.tag == data.tag) & (Container.sha == data.sha)
         ).join(Registry)
         existing_image = (await session.execute(q)).scalars().one_or_none()
 
@@ -36,5 +38,5 @@ class ContainerService:
         container_definition["registry"] = reg
         container = Container(**container_definition)
         if not dry_run:
-          await container.add(session)
+            await container.add(session)
         return container

@@ -5,6 +5,7 @@ admin endpoints:
 
 from http import HTTPStatus
 from typing import Annotated, Any
+
 from fastapi import APIRouter, Depends, Query, Request
 from kubernetes.client.exceptions import ApiException
 from requests import Session
@@ -12,14 +13,13 @@ from requests import Session
 from ..helpers.base_model import get_db
 from ..helpers.exceptions import FeatureNotAvailableException, InvalidRequest
 from ..helpers.kubernetes import KubernetesClient
-from ..helpers.settings import settings
 from ..helpers.query_filters import apply_filters
-from ..helpers.wrappers import audit, Auth
+from ..helpers.settings import settings
+from ..helpers.wrappers import Auth, audit
 from ..models.audit import Audit
 from ..schemas.audits import AuditBase, AuditFilters
 from ..schemas.delivery_secrets import DeliverySecretPost
 from ..schemas.pagination import PageResponse
-
 
 router = APIRouter(tags=["admin"])
 
@@ -62,17 +62,18 @@ async def update_delivery_secret(
     # Which delivery?
     if settings.github_delivery:
         raise InvalidRequest(
-            "Unable to update GitHub delivery details for " \
+            "Unable to update GitHub delivery details for "
             "security reasons. Please contact the system administrator"
         )
 
     try:
         if settings.other_delivery:
-            label=f"url={settings.other_delivery}"
+            label = f"url={settings.other_delivery}"
             secret = None
             for secret in v1_client.list_namespaced_secret(
-                    settings.controller_namespace, label_selector=label
-                ).items:
+                settings.controller_namespace,
+                label_selector=label
+            ).items:
                 break
 
             if secret is None:
@@ -85,6 +86,5 @@ async def update_delivery_secret(
         )
     except ApiException as apie:
         raise InvalidRequest(
-            "Could not update the secret. Check the logs for more details"
-            , 500
+            "Could not update the secret. Check the logs for more details", 500
         ) from apie

@@ -5,18 +5,17 @@ user-related endpoints:
 - PUT /users/reset-password
 """
 from http import HTTPStatus
-from fastapi import APIRouter, Depends, Request
 from typing import Any
+
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session as DBSession
 
+from app.helpers.base_model import get_db
 from app.helpers.exceptions import InvalidRequest
 from app.helpers.keycloak import Keycloak
+from app.helpers.settings import kc_settings, settings
 from app.helpers.wrappers import Auth, audit
 from app.schemas.users import ResetPassword, UserPost
-from app.helpers.base_model import get_db
-from app.helpers.keycloak import Keycloak
-from app.helpers.settings import settings, kc_settings
-
 
 router = APIRouter(tags=["users"], prefix="/users")
 
@@ -45,9 +44,10 @@ async def create_user(
         "email": body.email,
         "username": user_info["username"],
         "tempPassword": user_info["password"],
-        "info": "The user should change the temp password at " \
-            f"https://{settings.public_url}/users/reset-password"
+        "info": "The user should change the temp password at "
+                f"https://{settings.public_url}/users/reset-password"
     }
+
 
 @router.put(
     '/reset-password',

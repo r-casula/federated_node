@@ -5,17 +5,21 @@ from .settings import settings
 
 
 def build_sql_uri(
-        username=None,
-        password=None,
-        host=None,
-        port=None,
-        database=None,
-        with_async:bool=False
-        ):
-        driver = "postgresql"
-        if with_async:
-            driver += "+asyncpg"
-        return f"{driver}://{username or settings.pguser}:{quote_plus(password or settings.pgpassword)}@{host or settings.pghost}:{port or settings.pgport}/{database or settings.pgdatabase}{settings.dbssl}"
+    username=None,
+    password=None,
+    host=None,
+    port=None,
+    database=None,
+    with_async: bool = False
+):
+    driver = "postgresql"
+    if with_async:
+        driver += "+asyncpg"
+    return f"{driver}://{username or settings.pguser}:" \
+        f"{quote_plus(password or settings.pgpassword)}" \
+        f"@{host or settings.pghost}:{port or settings.pgport}" \
+        f"/{database or settings.pgdatabase}{settings.dbssl}"
+
 
 PASS_GENERATOR_SET = string.ascii_letters + string.digits + "!$@#.-_"
 # Pod resource validation constants

@@ -1,6 +1,7 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime as dt
 from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.helpers.exceptions import InvalidRequest
 from app.helpers.keycloak import Keycloak

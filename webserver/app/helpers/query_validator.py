@@ -6,19 +6,21 @@ At the current state we support:
 """
 import logging
 import re
+
 import pymssql
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.exc import ProgrammingError, OperationalError, InternalError
+from sqlalchemy.exc import InternalError, OperationalError, ProgrammingError
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.helpers.const import build_sql_uri
-from app.models.dataset import Dataset
 from app.helpers.exceptions import DBError
+from app.models.dataset import Dataset
 
 logger = logging.getLogger('query_validator')
 logger.setLevel(logging.INFO)
 
-def connect_to_dataset(dataset:Dataset) -> sessionmaker:
+
+def connect_to_dataset(dataset: Dataset) -> Session | pymssql.Cursor | None:
     """
     Given a datasets object, create a connection string
     and return a session that can be used to send queries
@@ -39,16 +41,19 @@ def connect_to_dataset(dataset:Dataset) -> sessionmaker:
         )
         return session()
     elif dataset.type == "mssql":
-        conn = pymssql.connect(host=dataset.host, user=user, password=passw, database=dataset.name, port=dataset.port)
+        conn = pymssql.connect(
+            host=dataset.host, user=user, password=passw, database=dataset.name, port=dataset.port
+        )
         return conn.cursor(as_dict=True)
 
-def validate(query:str, dataset:Dataset) -> bool:
+
+def validate(query: str, dataset: Dataset) -> bool:
     """
     Simple method to validate SQL syntax, and against
     the actual dataset.
     """
     try:
-        session = connect_to_dataset(dataset)
+        session: Session | pymssql.Cursor | None = connect_to_dataset(dataset)
         if dataset.type == "postgres":
             # Read only query, so things like UPDATE, DELETE or DROP won't be executed
             session.execute(text('SET TRANSACTION READ ONLY'))

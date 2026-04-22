@@ -1,40 +1,40 @@
 import os
-from kubernetes.client import (
-    V1Pod, V1PersistentVolumeClaimVolumeSource,
-    V1VolumeMount, V1Container,
-    V1LocalObjectReference, V1PodSpec,
-    V1ObjectMeta, V1Volume, V1PersistentVolumeSpec,
-    V1AzureFilePersistentVolumeSource,
-    V1HostPathVolumeSource, V1EnvVar,
-    V1PersistentVolume, V1PersistentVolumeClaim,
-    V1EnvVarSource, V1SecretKeySelector,
-    V1PersistentVolumeClaimSpec, V1VolumeResourceRequirements,
-    V1CSIPersistentVolumeSource
-)
+
+from kubernetes.client import (V1AzureFilePersistentVolumeSource, V1Container,
+                               V1CSIPersistentVolumeSource, V1EnvVar,
+                               V1EnvVarSource, V1HostPathVolumeSource,
+                               V1LocalObjectReference, V1ObjectMeta,
+                               V1PersistentVolume, V1PersistentVolumeClaim,
+                               V1PersistentVolumeClaimSpec,
+                               V1PersistentVolumeClaimVolumeSource,
+                               V1PersistentVolumeSpec, V1Pod, V1PodSpec,
+                               V1SecretKeySelector, V1Volume, V1VolumeMount,
+                               V1VolumeResourceRequirements)
+
 from app.helpers.kubernetes import KubernetesClient
-from app.models.dataset import Dataset
 from app.helpers.settings import settings
+from app.models.dataset import Dataset
 
 
 class TaskPod:
     base_mount_path = "/mnt/vol"
 
     def __init__(
-            self,
-            name:str,
-            image:str,
-            dataset:Dataset,
-            labels:dict,
-            dry_run:str,
-            environment:dict,
-            command:str,
-            mount_path:dict,
-            input_path:dict,
-            resources:dict,
-            env_from:list,
-            db_query:dict,
-            regcred_secret:str
-        ):
+        self,
+        name: str,
+        image: str,
+        dataset: Dataset,
+        labels: dict,
+        dry_run: str,
+        environment: dict,
+        command: str,
+        mount_path: dict,
+        input_path: dict,
+        resources: dict,
+        env_from: list,
+        db_query: dict,
+        regcred_secret: str
+    ):
         self.name = name[:63]
         self.image = image
         self.dataset = dataset
@@ -105,32 +105,36 @@ class TaskPod:
             storage_class_name=settings.storage_class
         )
         if os.getenv("AZURE_STORAGE_ENABLED"):
-            pv_spec.azure_file=V1AzureFilePersistentVolumeSource(
+            pv_spec.azure_file = V1AzureFilePersistentVolumeSource(
                 read_only=False,
                 secret_name=os.getenv("AZURE_SECRET_NAME"),
                 share_name=os.getenv("AZURE_SHARE_NAME")
             )
         elif os.getenv("AWS_STORAGE_ENABLED"):
-            pv_spec.csi=V1CSIPersistentVolumeSource(
+            pv_spec.csi = V1CSIPersistentVolumeSource(
                 driver=os.getenv("AWS_STORAGE_DRIVER"),
                 volume_handle=os.getenv("AWS_FILES_SYSTEM_ID")
             )
         else:
-            pv_spec.host_path=V1HostPathVolumeSource(
+            pv_spec.host_path = V1HostPathVolumeSource(
                 path=settings.results_path
             )
 
         self.pv = V1PersistentVolume(
             api_version='v1',
             kind='PersistentVolume',
-            metadata=V1ObjectMeta(name=self.name, namespace=settings.task_namespace, labels=self.labels),
+            metadata=V1ObjectMeta(
+                name=self.name, namespace=settings.task_namespace, labels=self.labels
+            ),
             spec=pv_spec
         )
 
         self.pvc = V1PersistentVolumeClaim(
             api_version='v1',
             kind='PersistentVolumeClaim',
-            metadata=V1ObjectMeta(name=f"{self.name}-volclaim", namespace=settings.task_namespace, labels=self.labels),
+            metadata=V1ObjectMeta(
+                name=f"{self.name}-volclaim", namespace=settings.task_namespace, labels=self.labels
+            ),
             spec=V1PersistentVolumeClaimSpec(
                 access_modes=['ReadWriteMany'],
                 volume_name=self.name,
@@ -139,7 +143,7 @@ class TaskPod:
             )
         )
 
-    def get_task_pod_init_container(self, task_id:str):
+    def get_task_pod_init_container(self, task_id: str) -> list[V1Container]:
         """
         This will return a common spec for initContainer
         fot analytics tasks.
@@ -147,9 +151,13 @@ class TaskPod:
         so the whole volume is not exposed
         """
         self.create_db_env_vars()
-        self.env_init.append(V1EnvVar(name="INPUT_MOUNT", value=f"{self.base_mount_path}/{task_id}/input"))
+        self.env_init.append(
+            V1EnvVar(name="INPUT_MOUNT", value=f"{self.base_mount_path}/{task_id}/input")
+        )
         if self.input_path:
-            self.env_init.append(V1EnvVar(name="INPUT_FILE", value=list(self.input_path.keys())[0]))
+            self.env_init.append(
+                V1EnvVar(name="INPUT_FILE", value=list(self.input_path.keys())[0])
+            )
 
         vol_mount = V1VolumeMount(
             mount_path=self.base_mount_path,
@@ -162,7 +170,8 @@ class TaskPod:
             command=["/bin/sh"],
             args=[
                 "-c",
-                f"mkdir -p {self.base_mount_path}/{task_id}/results {self.base_mount_path}/{task_id}/input;"
+                f"mkdir -p {self.base_mount_path}/{task_id}/results "
+                f"{self.base_mount_path}/{task_id}/input;"
                 f"chmod 777 {self.base_mount_path}/{task_id}/input;"
                 f"ls -la {self.base_mount_path}/{task_id}"
             ]
@@ -220,7 +229,9 @@ class TaskPod:
             self.env_init.append(V1EnvVar(name="FROM_DIALECT", value=self.db_query["dialect"]))
             self.env_init.append(V1EnvVar(name="TO_DIALECT", value=self.dataset.type))
 
-        self.env.append(V1EnvVar(name="CONNECTION_STRING", value=self.dataset.get_connection_string()))
+        self.env.append(
+            V1EnvVar(name="CONNECTION_STRING", value=self.dataset.get_connection_string())
+        )
         self.env.append(V1EnvVar(name="CDM_SCHEMA", value=self.dataset.schema_read))
         self.env.append(V1EnvVar(name="WRITE_SCHEMA", value=self.dataset.schema_write))
         self.env.append(V1EnvVar(name="ORACLE_SID", value=self.dataset.name))

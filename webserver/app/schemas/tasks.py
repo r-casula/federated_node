@@ -1,6 +1,8 @@
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator, computed_field, model_validator
 from datetime import datetime as dt
+from typing import List, Optional
+
+from pydantic import (BaseModel, ConfigDict, Field, computed_field,
+                      field_validator, model_validator)
 
 from app.helpers.const import TASK_POD_INPUTS_PATH
 from app.helpers.exceptions import InvalidRequest
@@ -87,8 +89,8 @@ class TaskCreate(TaskBase):
 class TaskRead(TaskBase):
     id: int
     dataset_id: int
-    status: str|dict = "scheduled"
-    review_status: bool|None = Field(exclude=True)
+    status: str | dict = "scheduled"
+    review_status: bool | None = Field(exclude=True)
     dataset_id: int
     created_at: Optional[dt] = None
     updated_at: Optional[dt] = None
@@ -97,6 +99,7 @@ class TaskRead(TaskBase):
     @property
     def review(self) -> str:
         return REVIEW_STATUS[self.review_status]
+
 
 class TaskFilters(BaseModel):
     id__lte: Optional[int] = None
