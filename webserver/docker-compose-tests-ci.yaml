@@ -19,7 +19,7 @@ services:
     environment:
       PGHOST:
       PGDATABASE:
-      PGPORT:
+      PGPORT: 5432
       PGUSER:
       PGPASSWORD:
       PYTHONPATH: /app
