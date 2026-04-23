@@ -116,6 +116,16 @@ def event_loop():
     yield loop
     loop.close()
 
+from alembic import command
+from alembic.config import Config
+
+@fixture(scope="session", autouse=True)
+def setup_schema():
+    cfg = Config("/app/alembic.ini")
+    command.upgrade(cfg, "head")
+    yield
+    command.downgrade(cfg, "base")
+
 @fixture(scope="function")
 async def db_session():
     """The expectation with async_sessions is that the
