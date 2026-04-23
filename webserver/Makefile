@@ -7,6 +7,11 @@ env:
 run:
 	flask -A app/app run --host=0.0.0.0
 
+lint:
+	flake8 ./app --max-line-length=99
+	isort --check-only --diff ./app
+	black --check ./app --line-length=99 --diff
+
 build_docker:
 	docker build . -t ghcr.io/aridhia-open-source/federated_node_run:${TAG}
 

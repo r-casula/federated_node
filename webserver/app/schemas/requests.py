@@ -1,6 +1,7 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from datetime import datetime as dt
 from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.helpers.exceptions import InvalidRequest
 from app.helpers.keycloak import Keycloak
@@ -34,10 +35,10 @@ class TransferTokenBody(BaseModel):
     dataset_id: Optional[int] = None
     dataset_name: Optional[str] = Field(default=None, exclude=True)
 
-    @field_validator('requested_by')
+    @field_validator("requested_by")
     @classmethod
     def validate_requested_by(cls, v: dict) -> str:
-        if 'email' not in v:
+        if "email" not in v:
             raise InvalidRequest("Missing email from requested_by field")
 
         user: dict = Keycloak().get_user_by_email(v["email"])

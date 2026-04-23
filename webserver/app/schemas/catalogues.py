@@ -1,6 +1,7 @@
-from typing import Optional
-from pydantic import BaseModel, ConfigDict
 from datetime import datetime as dt
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict
 
 
 class CatalogueBase(BaseModel):

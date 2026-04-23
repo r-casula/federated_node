@@ -1,51 +1,56 @@
 from typing import List
+
+from fastapi import Request
 from kubernetes.client import V1Secret
 from kubernetes.client.exceptions import ApiException
-from sqlalchemy.orm import Session
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.helpers.settings import settings
-from app.helpers.kubernetes import KubernetesClient
-from app.models.dataset import Dataset
-from app.schemas.datasets import DatasetCreate, DatasetUpdate
-from app.helpers.keycloak import Keycloak
-from app.models.catalogue import Catalogue
-from app.models.dictionary import Dictionary
 from app.helpers.exceptions import InvalidRequest, KubernetesException
+from app.helpers.keycloak import Keycloak
+from app.helpers.kubernetes import KubernetesClient
+from app.helpers.settings import settings
+from app.models.catalogue import Catalogue
+from app.models.dataset import Dataset
+from app.models.dictionary import Dictionary
+from app.schemas.datasets import DatasetCreate
 
 
 class DatasetService:
     @staticmethod
-    def add(session: Session, data: DatasetCreate) -> Dataset:
-        if Dataset.get_dataset_by_name_or_id(session=session, name=data.name, raise_if_not_found=False):
+    async def add(session: AsyncSession, request: Request, data: DatasetCreate) -> Dataset:
+        if await Dataset.get_dataset_by_name_or_id(
+            session=session, name=data.name, raise_if_not_found=False
+        ):
             raise InvalidRequest("Dataset already exist with that name")
 
         if data.repository:
-            existing_link = session.execute(
-                select(Dataset).filter(Dataset.repository == data.repository)
+            existing_link = (
+                await session.execute(
+                    select(Dataset).filter(Dataset.repository == data.repository)
+                )
             ).one_or_none()
             if existing_link:
                 raise InvalidRequest(
-                    "Repository is already linked to another dataset. Please PATCH that dataset with repository: null"
+                    "Repository is already linked to another dataset. "
+                    "Please PATCH that dataset with repository: null"
                 )
 
         kc_client = Keycloak()
-        token_info = kc_client.decode_token(kc_client.get_token_from_headers())
+        token_info = kc_client.decode_token(kc_client.get_token_from_headers(request))
         user_id = kc_client.get_user_by_email(token_info["email"])["id"]
 
-        dataset_data = data.model_dump(exclude={'catalogue', 'dictionaries'})
+        dataset_data = data.model_dump(exclude={"catalogue", "dictionaries"})
         dataset = Dataset(**dataset_data)
 
         if data.catalogue:
             dataset.catalogue = Catalogue(**data.catalogue.model_dump())
 
         if data.dictionaries:
-            dataset.dictionaries = [
-                Dictionary(**d.model_dump()) for d in data.dictionaries
-            ]
+            dataset.dictionaries = [Dictionary(**d.model_dump()) for d in data.dictionaries]
 
         try:
-            dataset.add(session)
+            await dataset.add(session, False)
             v1 = KubernetesClient()
             v1.create_secret(
                 name=dataset.get_creds_secret_name(),
@@ -53,55 +58,63 @@ class DatasetService:
                     "PGPASSWORD": dataset.password,
                     "PGUSER": dataset.username,
                     "MSSQL_PASSWORD": dataset.password,
-                    "MSSQL_USER": dataset.username
+                    "MSSQL_USER": dataset.username,
                 },
-                namespaces=[settings.default_namespace, settings.task_namespace]
+                namespaces=[settings.default_namespace, settings.task_namespace],
             )
             # Add to keycloak
             kc_client = Keycloak()
-            admin_policy = kc_client.get_policy('admin-policy')
-            sys_policy = kc_client.get_policy('system-policy')
+            admin_policy = kc_client.get_policy("admin-policy")
+            sys_policy = kc_client.get_policy("system-policy")
 
             admin_ds_scope = []
-            admin_ds_scope.append(kc_client.get_scope('can_admin_dataset'))
-            admin_ds_scope.append(kc_client.get_scope('can_access_dataset'))
-            admin_ds_scope.append(kc_client.get_scope('can_exec_task'))
-            admin_ds_scope.append(kc_client.get_scope('can_admin_task'))
-            admin_ds_scope.append(kc_client.get_scope('can_send_request'))
-            admin_ds_scope.append(kc_client.get_scope('can_admin_request'))
-            policy = kc_client.create_policy({
-                "name": f"{dataset.id} - {dataset.name} Admin Policy",
-                "description": f"List of users allowed to administrate the {data.name} dataset",
-                "logic": "POSITIVE",
-                "users": [user_id]
-            }, "/user")
+            admin_ds_scope.append(kc_client.get_scope("can_admin_dataset"))
+            admin_ds_scope.append(kc_client.get_scope("can_access_dataset"))
+            admin_ds_scope.append(kc_client.get_scope("can_exec_task"))
+            admin_ds_scope.append(kc_client.get_scope("can_admin_task"))
+            admin_ds_scope.append(kc_client.get_scope("can_send_request"))
+            admin_ds_scope.append(kc_client.get_scope("can_admin_request"))
+            policy = kc_client.create_policy(
+                {
+                    "name": f"{dataset.id} - {dataset.name} Admin Policy",
+                    "description": f"List of users allowed to administrate the {data.name} dataset",
+                    "logic": "POSITIVE",
+                    "users": [user_id],
+                },
+                "/user",
+            )
 
-            resource_ds = kc_client.create_resource({
-                "name": f"{dataset.id}-{dataset.name}",
-                "displayName": f"{dataset.id} - {dataset.name}",
-                "scopes": admin_ds_scope,
-                "uris": []
-            })
-            kc_client.create_permission({
-                "name": f"{dataset.id}-{dataset.name} Admin Permission",
-                "description": "List of policies that will allow certain users or roles to administrate the dataset",
-                "type": "resource",
-                "logic": "POSITIVE",
-                "decisionStrategy": "AFFIRMATIVE",
-                "policies": [admin_policy["id"], sys_policy["id"], policy["id"]],
-                "resources": [resource_ds["_id"]],
-                "scopes": [scope["id"] for scope in admin_ds_scope]
-            })
-            session.commit()
+            resource_ds = kc_client.create_resource(
+                {
+                    "name": f"{dataset.id}-{dataset.name}",
+                    "displayName": f"{dataset.id} - {dataset.name}",
+                    "scopes": admin_ds_scope,
+                    "uris": [],
+                }
+            )
+            kc_client.create_permission(
+                {
+                    "name": f"{dataset.id}-{dataset.name} Admin Permission",
+                    "description": "List of policies that will allow certain users "
+                    "or roles to administrate the dataset",
+                    "type": "resource",
+                    "logic": "POSITIVE",
+                    "decisionStrategy": "AFFIRMATIVE",
+                    "policies": [admin_policy["id"], sys_policy["id"], policy["id"]],
+                    "resources": [resource_ds["_id"]],
+                    "scopes": [scope["id"] for scope in admin_ds_scope],
+                }
+            )
+            await session.commit()
             return dataset
         except Exception as e:
             # If the DB commit failed, we haven't touched K8s yet.
             # If K8s fails, we might want to rollback the DB or log a critical error.
-            session.rollback()
+            await session.rollback()
             raise e
 
     @staticmethod
-    def update(session: Session, ds:Dataset, data: DatasetUpdate) -> Dataset:
+    async def update(session: AsyncSession, ds: Dataset, data: dict) -> Dataset:
         """
         Updates the instance with new values. These should be
         already validated.
@@ -116,7 +129,7 @@ class DatasetService:
         session.add(ds)
         if cata:
             if ds.catalogue and ds.catalogue.title == cata["title"]:
-                session.execute(
+                await session.execute(
                     update(Catalogue).where(Catalogue.title == cata["title"]).values(cata)
                 )
             else:
@@ -127,26 +140,30 @@ class DatasetService:
             # Needs to validate existing dictionaries and update them if
             # necessary or add them
             for d in dicts:
-                if not session.execute(
-                    select(Dictionary).where(Dictionary.dataset_id == ds.id).filter_by(**d)
+                if not (
+                    await session.execute(
+                        select(Dictionary).where(Dictionary.dataset_id == ds.id).filter_by(**d)
+                    )
                 ).all():
                     q = select(Dictionary).filter_by(
-                        dataset_id=ds.id,
-                        field_name=d["field_name"],
-                        table_name=d["table_name"]
+                        dataset_id=ds.id, field_name=d["field_name"], table_name=d["table_name"]
                     )
-                    if session.execute(q).all():
+                    if (await session.execute(q)).all():
                         update(Dictionary).filter_by(
                             dataset_id=ds.id,
                             field_name=d["field_name"],
-                            table_name=d["table_name"]
+                            table_name=d["table_name"],
                         ).values(d)
                     else:
                         ds.dictionaries.append(Dictionary(**d))
 
         # Get existing secret
-        secret: V1Secret = v1.read_namespaced_secret(secret_name, settings.default_namespace, pretty='pretty')
-        secret_task: V1Secret = v1.read_namespaced_secret(secret_name, settings.task_namespace, pretty='pretty')
+        secret: V1Secret = v1.read_namespaced_secret(
+            secret_name, settings.default_namespace, pretty="pretty"
+        )
+        secret_task: V1Secret = v1.read_namespaced_secret(
+            secret_name, settings.task_namespace, pretty="pretty"
+        )
 
         # Update secret if credentials are provided
         new_username = data.pop("username", None)
@@ -156,10 +173,7 @@ class DatasetService:
         if new_pass:
             secret.data["PGPASSWORD"] = KubernetesClient.encode_secret_value(new_pass)
 
-        secret.metadata.labels = {
-            "type": "database",
-            "host": secret_name
-        }
+        secret.metadata.labels = {"type": "database", "host": secret_name}
         secret_task.data = secret.data
         # Check secret names
         new_host = data.get("host", None)
@@ -169,13 +183,19 @@ class DatasetService:
                 secret.metadata.name = ds.get_creds_secret_name(new_host, new_name)
                 secret_task.metadata = secret.metadata
                 secret.metadata.resource_version = None
-                v1.create_namespaced_secret(settings.default_namespace, body=secret, pretty='true')
-                v1.create_namespaced_secret(settings.task_namespace, body=secret_task, pretty='true')
+                v1.create_namespaced_secret(settings.default_namespace, body=secret, pretty="true")
+                v1.create_namespaced_secret(
+                    settings.task_namespace, body=secret_task, pretty="true"
+                )
                 v1.delete_namespaced_secret(namespace=settings.default_namespace, name=secret_name)
                 v1.delete_namespaced_secret(namespace=settings.task_namespace, name=secret_name)
             else:
-                v1.patch_namespaced_secret(namespace=settings.default_namespace, name=secret_name, body=secret)
-                v1.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret_task)
+                v1.patch_namespaced_secret(
+                    namespace=settings.default_namespace, name=secret_name, body=secret
+                )
+                v1.patch_namespaced_secret(
+                    namespace=settings.task_namespace, name=secret_name, body=secret_task
+                )
         except ApiException as e:
             # Host and name are unique so there shouldn't be duplicates. If so
             # let the exception to be re-raised with the internal one
@@ -185,21 +205,26 @@ class DatasetService:
         if new_name and new_name != ds.name:
             update_args = {
                 "name": f"{ds.id}-{data["name"]}",
-                "displayName": f"{ds.id} - {data["name"]}"
+                "displayName": f"{ds.id} - {data["name"]}",
             }
             kc_client.patch_resource(f"{ds.id}-{ds.name}", **update_args)
 
         if data.get("repository"):
-            data["repository"] = data.get("repository").lower()
-            existing_link = session.execute(
-                select(Dataset).filter(Dataset.repository == data["repository"], Dataset.id != ds.id)
+            data["repository"] = data["repository"].lower()
+            existing_link = (
+                await session.execute(
+                    select(Dataset).filter(
+                        Dataset.repository == data["repository"], Dataset.id != ds.id
+                    )
+                )
             ).one_or_none()
             if existing_link:
                 raise InvalidRequest(
-                    "Repository is already linked to another dataset. Please PATCH that dataset with repository: null"
+                    "Repository is already linked to another dataset. "
+                    "Please PATCH that dataset with repository: null"
                 )
         # Update table
         if data:
-            ds.update(session, data)
+            await ds.update(session, data)
 
         return ds

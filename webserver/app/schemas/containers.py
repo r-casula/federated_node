@@ -1,10 +1,9 @@
 import re
 from typing import Optional
+
 from pydantic import BaseModel, ConfigDict, model_validator
 
 from app.helpers.exceptions import InvalidRequest
-from app.models.container import Container
-from app.models.task import Task
 
 
 class ContainerBase(BaseModel):
@@ -20,7 +19,7 @@ class ContainerBase(BaseModel):
 class ContainerCreate(ContainerBase):
     registry: str
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def extract_fields(cls, data: dict):
         if not (data.get("tag") or data.get("sha")):
@@ -34,10 +33,16 @@ class ContainerCreate(ContainerBase):
 
     @classmethod
     def validate_image_format(cls, img_with_tag, img_with_sha):
-        if not (re.match(r'^\w[\w\.\-/]+\w:[\w\.\-]+$', img_with_tag) or re.match(r'^\w[\w\.\-/]+\w@sha256:[a-fA-F0-9]{64}$', img_with_sha)):
+        if not (
+            re.match(r"^\w[\w\.\-/]+\w:[\w\.\-]+$", img_with_tag)
+            or re.match(r"^\w[\w\.\-/]+\w@sha256:[a-fA-F0-9]{64}$", img_with_sha)
+        ):
             raise InvalidRequest(
-                f"{img_with_tag} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
+                f"{img_with_tag} does not have a tag or is malformed. "
+                "Please provide one in the format <registry>/<image>:<tag> or "
+                "<registry>/<image>@sha256.."
             )
+
 
 class ContainerUpdate(BaseModel):
     ml: Optional[bool] = None

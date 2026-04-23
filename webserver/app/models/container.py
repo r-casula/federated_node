@@ -1,11 +1,12 @@
-from sqlalchemy import ForeignKey, Integer, Boolean, String
-from sqlalchemy.orm import Mapped, relationship, mapped_column
+from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
 from app.helpers.base_model import BaseModel
 from app.models.registry import Registry
 
 
-class Container(BaseModel):# pylint: disable=missing-class-docstring
-    __tablename__ = 'containers'
+class Container(BaseModel):  # pylint: disable=missing-class-docstring
+    __tablename__ = "containers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
@@ -14,10 +15,10 @@ class Container(BaseModel):# pylint: disable=missing-class-docstring
     ml: Mapped[bool] = mapped_column(Boolean(), default=False)
     dashboard: Mapped[bool] = mapped_column(Boolean(), default=False)
 
-    registry_id: Mapped[int] = mapped_column(Integer, ForeignKey(Registry.id, ondelete='CASCADE'))
+    registry_id: Mapped[int] = mapped_column(Integer, ForeignKey(Registry.id, ondelete="CASCADE"))
     registry: Mapped["Registry"] = relationship("Registry", back_populates="containers")
 
-    def full_image_name(self):
+    def full_image_name(self) -> str:
         """Composes the registry/image name:tag or sha"""
         if self.sha:
             return f"{self.registry.url}/{self.name}@{self.sha}"

@@ -1,11 +1,12 @@
 # pylint: disable=duplicate-code
-from typing import Any
 from datetime import datetime as dt
+from typing import Any
 
-from sqlalchemy import Integer, DateTime, String, ForeignKey, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func
+
 from app.helpers.base_model import BaseModel
 from app.models.dataset import Dataset
 
@@ -14,10 +15,9 @@ class Catalogue(BaseModel):
     """
     Catalogue model
     """
-    __tablename__ = 'catalogues'
-    __table_args__ = (
-        UniqueConstraint('title', 'dataset_id'),
-    )
+
+    __tablename__ = "catalogues"
+    __table_args__ = (UniqueConstraint("title", "dataset_id"),)
     id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     version: MappedColumn[str] = mapped_column(String(256))
     title: MappedColumn[str] = mapped_column(String(256), nullable=False)
@@ -30,6 +30,6 @@ class Catalogue(BaseModel):
     )
 
     dataset_id: MappedColumn[Any] = mapped_column(
-        Integer, ForeignKey(Dataset.id, ondelete='CASCADE')
+        Integer, ForeignKey(Dataset.id, ondelete="CASCADE")
     )
-    dataset:Mapped["Dataset"] = relationship("Dataset")
+    dataset: Mapped["Dataset"] = relationship("Dataset")

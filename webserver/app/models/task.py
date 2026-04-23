@@ -1,50 +1,51 @@
-import logging
 import json
+import logging
 import re
 from datetime import datetime, timedelta
 from typing import Self, Tuple
 from uuid import uuid4
-from kubernetes.client import V1CustomResourceDefinition
-from kubernetes.client.exceptions import ApiException
-from sqlalchemy import Integer, DateTime, Select, String, ForeignKey, Boolean, select
-from sqlalchemy.orm import Mapped, Session, joinedload, relationship, mapped_column
-from sqlalchemy.sql import func
 
 import urllib3
-from app.helpers.const import (
-    MEMORY_RESOURCE_REGEX, MEMORY_UNITS, CPU_RESOURCE_REGEX
-)
-from app.helpers.settings import settings
+from kubernetes.client import V1CustomResourceDefinition
+from kubernetes.client.exceptions import ApiException
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Select, String, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, joinedload, mapped_column, relationship
+from sqlalchemy.sql import func
+
 from app.helpers.base_model import BaseModel
-from app.helpers.keycloak import Keycloak
-from app.helpers.kubernetes import KubernetesBatchClient, KubernetesCRDClient, KubernetesClient
+from app.helpers.const import CPU_RESOURCE_REGEX, MEMORY_RESOURCE_REGEX, MEMORY_UNITS
 from app.helpers.exceptions import (
-    DBError, InvalidRequest, TaskCRDExecutionException, TaskImageException, TaskExecutionException
+    DBError,
+    DBRecordNotFoundError,
+    InvalidRequest,
+    TaskCRDExecutionException,
+    TaskExecutionException,
+    TaskImageException,
 )
+from app.helpers.keycloak import Keycloak
+from app.helpers.kubernetes import KubernetesBatchClient, KubernetesClient, KubernetesCRDClient
+from app.helpers.settings import settings
 from app.helpers.task_pod import TaskPod
-from app.models.dataset import Dataset
 from app.models.container import Container
+from app.models.dataset import Dataset
 from app.models.registry import Registry
 
-logger = logging.getLogger('task_model')
+logger = logging.getLogger("task_model")
 logger.setLevel(logging.INFO)
 
 
-REVIEW_STATUS = {
-    True: "Approved Release",
-    False: "Blocked Release",
-    None: "Pending Review"
-}
+REVIEW_STATUS = {True: "Approved Release", False: "Blocked Release", None: "Pending Review"}
 
 
-class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instance-attributes
-    __tablename__ = 'tasks'
+class Task(BaseModel):  # pylint: disable=missing-class-docstring,too-many-instance-attributes
+    __tablename__ = "tasks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     docker_image: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str] = mapped_column(String(4096))
-    pod_status: Mapped[str] = mapped_column(String(256), server_default='scheduled')
+    pod_status: Mapped[str] = mapped_column(String(256), server_default="scheduled")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=False), nullable=False, insert_default=func.now()
     )
@@ -54,10 +55,8 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
     requested_by: Mapped[str] = mapped_column(String(256), nullable=False)
     review_status: Mapped[bool] = mapped_column(Boolean, nullable=True)
 
-    dataset_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey(Dataset.id, ondelete='CASCADE')
-    )
-    dataset: Mapped["Dataset"]  = relationship("Dataset", overlaps="task")
+    dataset_id: Mapped[int] = mapped_column(Integer, ForeignKey(Dataset.id, ondelete="CASCADE"))
+    dataset: Mapped["Dataset"] = relationship("Dataset", overlaps="task")
 
     def __init__(self, **kwargs):
         self.executors = kwargs.pop("executors")
@@ -72,14 +71,22 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         super().__init__(**kwargs)
 
     @classmethod
-    def get_by_id(
-        cls, session:Session, obj_id: int, _raise_if_not_found:bool = True
-    ) -> Self | None:
+    async def get_by_id(cls, session: AsyncSession, obj_id: int) -> Self | None:
         q = select(cls).options(joinedload(cls.dataset)).where(cls.id == obj_id)
-        return session.execute(q).scalars().one_or_none()
+        task_query_results = await session.execute(q)
+        return task_query_results.scalars().one_or_none()
 
     @classmethod
-    def validate_cpu_resources(cls, limit_value:str, request_value:str):
+    async def get_by_id_or_raise(cls, session: AsyncSession, obj_id: int) -> Self:
+        task: Self | None = await cls.get_by_id(session, obj_id)
+
+        if task is None:
+            raise DBRecordNotFoundError(f"Task with id {obj_id} does not exist")
+
+        return task
+
+    @classmethod
+    def validate_cpu_resources(cls, limit_value: str, request_value: str):
         """
         Given a value for the cpu limits or requests, make sure it conforms to
         accepted k8s values.
@@ -100,7 +107,7 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
             raise InvalidRequest("Cpu limit cannot be lower than request")
 
     @classmethod
-    def validate_memory_resources(cls, limit_value:str, request_value:str):
+    def validate_memory_resources(cls, limit_value: str, request_value: str):
         """
         Given a value for the memory limits or requests, make sure it conforms to
         accepted k8s values.
@@ -123,83 +130,89 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
             raise InvalidRequest("Memory limit cannot be lower than request")
 
     @classmethod
-    def _convert_cpu_values_to_int(cls, val:str) -> float:
+    def _convert_cpu_values_to_int(cls, val: str) -> float:
         """
         Since cpu values can come with different units,
         they should be standardized to float, so that they can
         be compared and validated to have limits > requests
         """
-        if re.match(r'^\d+$', val):
+        if re.match(r"^\d+$", val):
             return float(val)
-        if re.match(r'^\d+\.\d+$', val):
+        if re.match(r"^\d+\.\d+$", val):
             return float(val)
         return float(val[:-1]) / 1000
 
     @classmethod
-    def _convert_memory_values_to_int(cls, val:str) -> int:
+    def _convert_memory_values_to_int(cls, val: str) -> int:
         """
         Since memory values can come with different units,
         they should be standardized to int, so that they can
         be compared and validated to have limits > requests
         """
-        if re.match(r'^\d+$', val):
+        if re.match(r"^\d+$", val):
             return int(val)
-        if re.match(r'^\d+e\d+$', val):
-            base, exp = val.split('e')
-            return int(base) * 10**(int(exp))
+        if re.match(r"^\d+e\d+$", val):
+            base, exp = val.split("e")
+            return int(base) * 10 ** (int(exp))
 
         # Other accepted formats trail with some letters
-        unit_index = re.search(r'[^\d]+$', val).span()[0]
+        unit_index = re.search(r"[^\d]+$", val).span()[0]
         base = val[:unit_index]
         unit = val[unit_index:]
         return int(base) * MEMORY_UNITS[unit]
 
     @classmethod
-    def split_registry_from_image(cls, session:Session, docker_image:str) -> tuple[str, str]:
+    async def split_registry_from_image(
+        cls, session: AsyncSession, docker_image: str
+    ) -> tuple[str, str]:
         """
         Find the registry
         """
-        for i in range(len(docker_image.split('/'))):
-            registry = "/".join(docker_image.split('/')[0:i])
+        for i in range(len(docker_image.split("/"))):
+            registry = "/".join(docker_image.split("/")[0:i])
 
             q = select(func.count(Registry.id)).where(Registry.url == registry)
 
-            if session.execute(q).scalar_one() == 1:
-                return registry, "/".join(docker_image.split('/')[i:])
+            if (await session.execute(q)).scalar_one() == 1:
+                return registry, "/".join(docker_image.split("/")[i:])
 
         raise InvalidRequest(
             "Could not find the image in the mapped registries. Check the image has the full name"
         )
 
     @classmethod
-    def get_image_with_repo(
-        cls, session:Session, docker_image:str, string_only:bool=True
+    async def get_image_with_repo(
+        cls, session: AsyncSession, docker_image: str, string_only: bool = True
     ) -> str | Container:
         """
         Looks through the CRs for the image and if exists,
         returns the full image name with the repo prefixing the image.
         """
-        registry, image = cls.split_registry_from_image(session, docker_image)
+        registry, image = await cls.split_registry_from_image(session, docker_image)
 
         tag = None
         sha = None
-        if '@' in image:
-            image_name, sha = image.split('@')
+        if "@" in image:
+            image_name, sha = image.split("@")
         else:
-            image_name, tag = image.split(':')
+            image_name, tag = image.split(":")
 
-        q: Select[Tuple[Container]] = select(Container).options(
-            joinedload(Container.registry)
-        ).where(
-            Container.name==image_name,
-            Registry.url == registry,
-        ).where(
-            (
-                ((Container.tag==tag) & (Container.tag is not None)) |
-                ((Container.sha==sha) & (Container.sha is not None))
+        q: Select[Tuple[Container]] = (
+            select(Container)
+            .options(joinedload(Container.registry))
+            .where(
+                Container.name == image_name,
+                Registry.url == registry,
             )
-        ).join(Registry)
-        image = session.execute(q).scalars().one_or_none()
+            .where(
+                (
+                    ((Container.tag == tag) & (Container.tag is not None))
+                    | ((Container.sha == sha) & (Container.sha is not None))
+                )
+            )
+            .join(Registry)
+        )
+        image = (await session.execute(q)).scalars().one_or_none()
 
         if image is None:
             raise TaskExecutionException(f"Image {docker_image} could not be found")
@@ -219,7 +232,7 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         """
         return f"{self.name.lower().replace(' ', '-')}-{uuid4()}"
 
-    def get_expiration_date(self, as_dt:bool=False) -> str|datetime:
+    def get_expiration_date(self, as_dt: bool = False) -> str | datetime:
         """
         In order to help with the cleanup process we set a lable for
         - pod
@@ -242,10 +255,10 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         Wrapper for few feature flag to know if we need to handle CRDs
         """
         return (
-            (not self.is_from_controller) and \
-                settings.task_controller is not None \
-                    and settings.auto_delivery_results is not None
-            )
+            (not self.is_from_controller)
+            and settings.task_controller is not None
+            and settings.auto_delivery_results is not None
+        )
 
     def run(self, validate=False) -> None:
         """
@@ -257,40 +270,38 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         secret_name = self.dataset.get_creds_secret_name()
         provided_env = self.executors[0].get("env", {})
 
-        command=None
+        command = None
         if len(self.executors):
-            command= self.executors[0].get("command", '')
+            command = self.executors[0].get("command", "")
 
-        body = TaskPod(**{
-            "name": self.pod_name(),
-            "image": self.docker_image,
-            "dataset": self.dataset,
-            "db_query": self.db_query,
-            "labels": {
-                "task_id": str(self.id),
-                "requested_by": self.requested_by,
-                "dataset_id": str(self.dataset_id),
-                "delete_by": self.get_expiration_date()
-            },
-            "dry_run": 'true' if validate else 'false',
-            "environment": provided_env,
-            "command": command,
-            "mount_path": self.outputs,
-            "input_path": self.inputs,
-            "resources": self.resources,
-            "env_from": v1.create_from_env_object(secret_name),
-            "regcred_secret": self.regcred_secret
-        }).create_pod_spec()
+        body = TaskPod(
+            **{
+                "name": self.pod_name(),
+                "image": self.docker_image,
+                "dataset": self.dataset,
+                "db_query": self.db_query,
+                "labels": {
+                    "task_id": str(self.id),
+                    "requested_by": self.requested_by,
+                    "dataset_id": str(self.dataset_id),
+                    "delete_by": self.get_expiration_date(),
+                },
+                "dry_run": "true" if validate else "false",
+                "environment": provided_env,
+                "command": command,
+                "mount_path": self.outputs,
+                "input_path": self.inputs,
+                "resources": self.resources,
+                "env_from": v1.create_from_env_object(secret_name),
+                "regcred_secret": self.regcred_secret,
+            }
+        ).create_pod_spec()
         try:
             current_pod = self.get_current_pod()
             if current_pod:
                 raise TaskExecutionException("Pod is already running", code=409)
 
-            v1.create_namespaced_pod(
-                namespace=settings.task_namespace,
-                body=body,
-                pretty='true'
-            )
+            v1.create_namespaced_pod(namespace=settings.task_namespace, body=body, pretty="true")
         except ApiException as e:
             logger.error(json.loads(e.body))
             raise InvalidRequest(f"Failed to run pod: {e.reason}") from e
@@ -299,15 +310,14 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
             # create CRD
             self.create_controller_crd()
 
-    def get_current_pod(self, is_running:bool=True):
+    def get_current_pod(self, is_running: bool = True):
         """
         Fetches the pod object from k8s API.
             is_running will only consider running pods only
         """
         v1 = KubernetesClient()
         running_pods = v1.list_namespaced_pod(
-            settings.task_namespace,
-            label_selector=f"task_id={self.id}"
+            settings.task_namespace, label_selector=f"task_id={self.id}"
         )
         try:
             running_pods.items.sort(key=lambda x: x.metadata.creation_timestamp, reverse=True)
@@ -334,7 +344,7 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         """
         status = self.pod_status
         if self.get_expiration_date(as_dt=True) < datetime.now():
-            self.pod_status = 'deleted'
+            self.pod_status = "deleted"
             return self.pod_status
 
         try:
@@ -344,26 +354,24 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
 
             status_obj = status_obj[0].state
 
-            for status in ['running', 'waiting', 'terminated']:
+            for status in ["running", "waiting", "terminated"]:
                 st = getattr(status_obj, status)
                 if st is not None:
                     break
 
-            returned_status =  {
-                "started_at": st.started_at
-            }
-            if status == 'terminated':
-                returned_status.update({
-                    "finished_at": getattr(st, "finished_at", None),
-                    "exit_code": getattr(st, "exit_code", None),
-                    "reason": getattr(st, "reason", None)
-                })
+            returned_status = {"started_at": st.started_at}
+            if status == "terminated":
+                returned_status.update(
+                    {
+                        "finished_at": getattr(st, "finished_at", None),
+                        "exit_code": getattr(st, "exit_code", None),
+                        "reason": getattr(st, "reason", None),
+                    }
+                )
             self.pod_status = status
-            return {
-                status: returned_status
-            }
+            return {status: returned_status}
         except AttributeError:
-            self.pod_status = status if status != 'running' else 'deleted'
+            self.pod_status = status if status != "running" else "deleted"
             return self.pod_status
 
     def terminate_pod(self):
@@ -380,7 +388,7 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
             has_error = True
 
         try:
-            self.pod_status = 'cancelled'
+            self.pod_status = "cancelled"
         except Exception as exc:
             raise DBError("An error occurred while updating") from exc
 
@@ -394,26 +402,23 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         """
         v1_batch = KubernetesBatchClient()
         job_name = f"result-job-{uuid4()}"
-        job = v1_batch.create_job_spec({
-            "name": job_name,
-            "persistent_volumes": [
-                {
-                    "name": f"{self.get_current_pod(is_running=False).metadata.name}-volclaim",
-                    "mount_path": settings.task_pod_results_path,
-                    "vol_name": "data",
-                    "sub_path": f"{self.id}/results"
-                }
-            ],
-            "labels": {
-                "result_task_id": str(self.id),
-                "requested_by": self.requested_by
+        job = v1_batch.create_job_spec(
+            {
+                "name": job_name,
+                "persistent_volumes": [
+                    {
+                        "name": f"{self.get_current_pod(is_running=False).metadata.name}-volclaim",
+                        "mount_path": settings.task_pod_results_path,
+                        "vol_name": "data",
+                        "sub_path": f"{self.id}/results",
+                    }
+                ],
+                "labels": {"result_task_id": str(self.id), "requested_by": self.requested_by},
             }
-        })
+        )
         try:
             v1_batch.create_namespaced_job(
-                namespace=settings.task_namespace,
-                body=job,
-                pretty='true'
+                namespace=settings.task_namespace, body=job, pretty="true"
             )
             # Get the job's pod
             v1 = KubernetesClient()
@@ -427,14 +432,14 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
                 pod_name=job_pod.metadata.name,
                 source_path=settings.task_pod_results_path,
                 dest_path=f"{settings.results_path}/{self.id}/results",
-                out_name=f"{settings.public_url}-results-{self.id}"
+                out_name=f"{settings.public_url}-results-{self.id}",
             )
             v1.delete_pod(job_pod.metadata.name)
             v1_batch.delete_job(job_name)
         except ApiException as e:
-            if 'job_pod' in locals() and self.get_current_pod(job_pod.metadata.name):
+            if "job_pod" in locals() and self.get_current_pod(job_pod.metadata.name):
                 v1_batch.delete_job(job_name)
-            logger.error(getattr(e, 'reason'))
+            logger.error(getattr(e, "reason"))
             raise InvalidRequest(f"Failed to run pod: {e.reason}") from e
         except urllib3.exceptions.MaxRetryError as mre:
             raise InvalidRequest("The cluster could not create the job") from mre
@@ -454,32 +459,34 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         crd_client = KubernetesCRDClient()
         try:
             crd_client.create_cluster_custom_object(
-                settings.crd_domain, 'v1', 'analytics',
+                settings.crd_domain,
+                "v1",
+                "analytics",
                 {
                     "apiVersion": f"{settings.crd_domain}/v1",
                     "kind": "Analytics",
                     "metadata": {
                         "annotations": {
-                            f"{settings.crd_domain}/user": 'ok',
+                            f"{settings.crd_domain}/user": "ok",
                             f"{settings.crd_domain}/task_id": str(self.id),
-                            f"{settings.crd_domain}/done": 'true'
+                            f"{settings.crd_domain}/done": "true",
                         },
-                        "name": f"fn-task-{self.id}"
+                        "name": f"fn-task-{self.id}",
                     },
                     "spec": {
                         "dataset": {"name": self.dataset.name},
                         "image": self.docker_image,
                         "project": "federated_node",
                         "source": {
-                            "repository": self.dataset.repository or
-                                        "Aridhia-Open-Source/PHEMS_federated_node"
+                            "repository": self.dataset.repository
+                            or "Aridhia-Open-Source/PHEMS_federated_node"
                         },
                         "user": {
                             "idpId": "",
-                            "username": Keycloak().get_user_by_id(self.requested_by)["username"]
-                        }
-                    }
-                }
+                            "username": Keycloak().get_user_by_id(self.requested_by)["username"],
+                        },
+                    },
+                },
             )
         except ApiException as apie:
             if apie.status != 409:
@@ -503,11 +510,13 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
             settings.crd_domain, "v1", "analytics"
         )
         for crd in v1_crds["items"]:
-            if crd["metadata"]["annotations"].get(f"{settings.crd_domain}/task_id") == str(self.id):
+            if crd["metadata"]["annotations"].get(f"{settings.crd_domain}/task_id") == str(
+                self.id
+            ):
                 return crd["metadata"]["name"]
         return None
 
-    def get_task_crd(self) -> V1CustomResourceDefinition|None:
+    def get_task_crd(self) -> V1CustomResourceDefinition | None:
         """
         Find the CRD associated with the current task.
             Ignore if not found
@@ -515,23 +524,20 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         crd_client = KubernetesCRDClient()
         try:
             return crd_client.get_cluster_custom_object(
-                settings.crd_domain,
-                "v1",
-                "analytics",
-                self.crd_name()
+                settings.crd_domain, "v1", "analytics", self.crd_name()
             )
         except ApiException as apie:
             if apie.status == 404:
                 return None
             raise TaskCRDExecutionException(apie.body, apie.status) from apie
 
-    def update_task_crd(self, approval:bool):
+    def update_task_crd(self, approval: bool):
         """
         In case the review happened, update the CRD
         annotation with the appropriate approved value
         """
         crd_client = KubernetesCRDClient()
-        crd_client.api_client.set_default_header('Content-Type', 'application/json-patch+json')
+        crd_client.api_client.set_default_header("Content-Type", "application/json-patch+json")
         try:
             task_crd: V1CustomResourceDefinition | None = self.get_task_crd()
             if not task_crd:
@@ -540,8 +546,11 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
             annotations = task_crd["metadata"].get("annotations", {})
             annotations[f"{settings.crd_domain}/approved"] = str(approval)
             crd_client.patch_cluster_custom_object(
-                settings.crd_domain, "v1", "analytics", self.crd_name(),
-                [{"op": "add", "path": "/metadata/annotations", "value": annotations}]
+                settings.crd_domain,
+                "v1",
+                "analytics",
+                self.crd_name(),
+                [{"op": "add", "path": "/metadata/annotations", "value": annotations}],
             )
         except ApiException as apie:
             raise TaskCRDExecutionException(apie.body, apie.status) from apie
@@ -550,7 +559,7 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         """
         Retrieve the pod's logs
         """
-        if 'waiting' in self.status:
+        if "waiting" in self.status:
             return "Task queued"
 
         pod = self.get_current_pod(is_running=False)
@@ -560,9 +569,10 @@ class Task(BaseModel):# pylint: disable=missing-class-docstring,too-many-instanc
         v1 = KubernetesClient()
         try:
             return v1.read_namespaced_pod_log(
-                pod.metadata.name, timestamps=True,
+                pod.metadata.name,
+                timestamps=True,
                 namespace=settings.task_namespace,
-                container=pod.metadata.name
+                container=pod.metadata.name,
             ).splitlines()
         except ApiException as apie:
             raise TaskExecutionException("Failed to fetch the logs") from apie

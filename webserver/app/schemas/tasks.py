@@ -1,6 +1,7 @@
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator, computed_field, model_validator
 from datetime import datetime as dt
+from typing import List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from app.helpers.const import TASK_POD_INPUTS_PATH
 from app.helpers.exceptions import InvalidRequest
@@ -37,7 +38,7 @@ class TaskCreate(TaskBase):
     repository: Optional[str] = Field(default=None, exclude=True)
     tags: Optional[dict] = Field(default={}, exclude=True)
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def extract_fields(cls, data: dict):
         executors = data["executors"][0]
@@ -51,11 +52,11 @@ class TaskCreate(TaskBase):
 
         # Output volumes validation
         if not isinstance(data.get("outputs", {}), dict):
-            raise InvalidRequest("\"outputs\" field must be a json object or dictionary")
+            raise InvalidRequest('"outputs" field must be a json object or dictionary')
         if not data.get("outputs", {}):
             data["outputs"] = {"results": settings.task_pod_results_path}
         if not isinstance(data.get("inputs", {}), dict):
-            raise InvalidRequest("\"inputs\" field must be a json object or dictionary")
+            raise InvalidRequest('"inputs" field must be a json object or dictionary')
         if not data.get("inputs", {}):
             data["inputs"] = {"inputs.csv": TASK_POD_INPUTS_PATH}
 
@@ -63,18 +64,18 @@ class TaskCreate(TaskBase):
         if "resources" in data:
             Task.validate_cpu_resources(
                 data["resources"].get("limits", {}).get("cpu"),
-                data["resources"].get("requests", {}).get("cpu")
+                data["resources"].get("requests", {}).get("cpu"),
             )
             Task.validate_memory_resources(
                 data["resources"].get("limits", {}).get("memory"),
-                data["resources"].get("requests", {}).get("memory")
+                data["resources"].get("requests", {}).get("memory"),
             )
         if data.get("db_query") is not None and "query" not in data["db_query"]:
             raise InvalidRequest("`db_query` field must include a `query`")
 
         return data
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
         name = (v or "").replace(" ", "")
@@ -87,8 +88,8 @@ class TaskCreate(TaskBase):
 class TaskRead(TaskBase):
     id: int
     dataset_id: int
-    status: str|dict = "scheduled"
-    review_status: bool|None = Field(exclude=True)
+    status: str | dict = "scheduled"
+    review_status: bool | None = Field(exclude=True)
     dataset_id: int
     created_at: Optional[dt] = None
     updated_at: Optional[dt] = None
@@ -97,6 +98,7 @@ class TaskRead(TaskBase):
     @property
     def review(self) -> str:
         return REVIEW_STATUS[self.review_status]
+
 
 class TaskFilters(BaseModel):
     id__lte: Optional[int] = None

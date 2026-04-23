@@ -1,18 +1,18 @@
 # pylint: disable=duplicate-code
 from datetime import datetime as dt
-from sqlalchemy import Integer, DateTime, String, ForeignKey, UniqueConstraint
-from sqlalchemy.orm import Mapped, relationship, mapped_column
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
 from sqlalchemy.sql import func
+
 from app.helpers.base_model import BaseModel
 from app.models.dataset import Dataset
 
 
-class Dictionary(BaseModel):# pylint: disable=missing-class-docstring
-    __tablename__ = 'dictionaries'
-    __table_args__ = (
-        UniqueConstraint('table_name', 'dataset_id', 'field_name'),
-    )
+class Dictionary(BaseModel):  # pylint: disable=missing-class-docstring
+    __tablename__ = "dictionaries"
+    __table_args__ = (UniqueConstraint("table_name", "dataset_id", "field_name"),)
     id: MappedColumn[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     table_name: MappedColumn[str] = mapped_column(String(256), nullable=False)
     field_name: MappedColumn[str] = mapped_column(String(256), nullable=False)
@@ -26,6 +26,6 @@ class Dictionary(BaseModel):# pylint: disable=missing-class-docstring
     )
 
     dataset_id: MappedColumn[int] = mapped_column(
-        Integer, ForeignKey(Dataset.id, ondelete='CASCADE')
+        Integer, ForeignKey(Dataset.id, ondelete="CASCADE")
     )
-    dataset:Mapped["Dataset"] = relationship("Dataset")
+    dataset: Mapped["Dataset"] = relationship("Dataset")

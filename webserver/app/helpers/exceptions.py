@@ -1,49 +1,65 @@
-from http.client import HTTPException
-from werkzeug.sansio.response import Response
 import json
-import re
 import traceback
+from http.client import HTTPException
+
+from werkzeug.sansio.response import Response
 
 
 class LogAndException(HTTPException):
     code = 500
     description = None
 
-    def __init__(self, message:str = "", code=None, description: str | None = None, response: Response | None = None) -> None:
+    def __init__(
+        self,
+        message: str = "",
+        code=None,
+        description: str | None = None,
+        response: Response | None = None,
+    ) -> None:
         traceback.print_exc()
         self.description = message or getattr(self, "description") or description
         if code:
             self.code = code
         super().__init__(self.description, response)
 
+
 class InvalidDBEntry(LogAndException):
     code = 400
+
 
 class DBError(LogAndException):
     code = 400
 
+
 class DBRecordNotFoundError(LogAndException):
     code = 404
 
+
 class InvalidRequest(LogAndException):
     code = 400
+
 
 class AuthenticationError(LogAndException):
     code = 401
     description = "Unauthenticated"
 
+
 class UnauthorizedError(LogAndException):
     code = 403
     description = "Unauthorized"
 
+
 class KeycloakError(LogAndException):
     pass
+
 
 class TaskImageException(LogAndException):
     pass
 
+
 class TaskExecutionException(LogAndException):
     pass
+
 
 class TaskCRDExecutionException(LogAndException):
     """
@@ -53,9 +69,10 @@ class TaskCRDExecutionException(LogAndException):
     Another benefit is that CRD validation happens at k8s level
     and we can just pick info up and be sure is accurate.
     """
+
     details = "Could not activate automatic delivery"
 
-    def __init__(self, description = None, code=None, response = None):
+    def __init__(self, description=None, code=None, response=None):
         super().__init__(description, code, response)
         req_values = []
         unsupp_values = []
@@ -74,22 +91,28 @@ class TaskCRDExecutionException(LogAndException):
             self.code = 500
             self.description = self.details
 
+
 class KubernetesException(LogAndException):
-    def __init__(self, body:dict|str = None, code:int = None):
+    def __init__(self, body: dict | str = None, code: int = None):
         try:
             body_json: dict = json.loads(body)
             self.code = body_json.pop("code")
-            self.description = "".join("An unexpected kubernetes error occurred. Check the details field")
+            self.description = "".join(
+                "An unexpected kubernetes error occurred. Check the details field"
+            )
             self.extra_fields = body_json["details"]["causes"]
         except json.decoder.JSONDecodeError:
             self.description = body
         super().__init__()
 
+
 class ContainerRegistryException(LogAndException):
     pass
 
+
 class FeatureNotAvailableException(LogAndException):
     code = 400
-    def __init__(self, feature:str, response = None):
+
+    def __init__(self, feature: str, response=None):
         description = f"The {feature} feature is not available on this Federated Node"
         super().__init__("", self.code, description, response)
