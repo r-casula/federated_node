@@ -34,8 +34,8 @@ dependencies = [
     "httpx>=0.28.1",
     "asyncpg>=0.31.0",
     "kubernetes-asyncio>=35.0.1",
-    "pydantic-settings>=2.13.1"
-    "urllib3>=2.7.0"
+    "pydantic-settings>=2.13.1",
+    "urllib3>=2.7.0",
     "cryptography>=48.0.1",
 ]
 
