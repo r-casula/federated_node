@@ -4,7 +4,6 @@ import responses
 from pytest import mark
 from unittest import mock
 
-from requests.exceptions import ConnectionError
 from app.helpers.keycloak import URLS
 from app.helpers.settings import kc_settings
 from app.helpers.exceptions import AuthenticationError
@@ -64,12 +63,16 @@ class TestHealthCheck:
         hc_resp = await client.get("/health_check")
         assert hc_resp.status_code == 200
 
-    @mock.patch('app.routes.general.requests.get', side_effect=ConnectionError("Some failure"))
     @mark.asyncio
-    async def test_health_check_fails(self, mock_req, client):
+    async def test_health_check_fails(self, respx_mock, client):
         """
         Check that the HC returns 500 with keycloak connection issues
         """
+        respx_mock.get(
+            URLS["health_check"]
+        ).mock(
+            side_effect=httpx.ConnectError("Some failure")
+        )
         hc_resp = await client.get("/health_check")
         assert hc_resp.status_code == 502
         assert hc_resp.json() == {'keycloak': False, 'status': 'non operational'}
