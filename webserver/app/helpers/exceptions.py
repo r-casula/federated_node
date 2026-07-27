@@ -100,7 +100,7 @@ class KubernetesException(LogAndException):
             self.description = "".join(
                 "An unexpected kubernetes error occurred. Check the details field"
             )
-            self.extra_fields = body_json["details"]["causes"]
+            self.extra_fields = body_json.get("details", {}).get("causes")
         except json.decoder.JSONDecodeError:
             self.description = body
         super().__init__()

@@ -21,12 +21,12 @@ logger = logging.getLogger("query_validator")
 logger.setLevel(logging.INFO)
 
 
-def connect_to_dataset(dataset: Dataset) -> Session | pymssql.Cursor | None:
+async def connect_to_dataset(dataset: Dataset) -> Session | pymssql.Cursor | None:
     """
     Given a datasets object, create a connection string
     and return a session that can be used to send queries
     """
-    user, passw = dataset.get_credentials()
+    user, passw = await dataset.get_credentials()
     if dataset.type == "postgres":
         engine = create_engine(
             build_sql_uri(
@@ -46,13 +46,13 @@ def connect_to_dataset(dataset: Dataset) -> Session | pymssql.Cursor | None:
         return conn.cursor(as_dict=True)
 
 
-def validate(query: str, dataset: Dataset) -> bool:
+async def validate(query: str, dataset: Dataset) -> bool:
     """
     Simple method to validate SQL syntax, and against
     the actual dataset.
     """
     try:
-        session: Session | pymssql.Cursor | None = connect_to_dataset(dataset)
+        session = await connect_to_dataset(dataset)
         if dataset.type == "postgres":
             # Read only query, so things like UPDATE, DELETE or DROP won't be executed
             session.execute(text("SET TRANSACTION READ ONLY"))

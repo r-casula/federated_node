@@ -9,7 +9,7 @@ from http import HTTPStatus
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
-from sqlalchemy.orm import Session as DBSession
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from app.helpers.base_model import get_db
 from app.helpers.exceptions import InvalidRequest

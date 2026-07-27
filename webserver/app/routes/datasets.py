@@ -289,6 +289,6 @@ async def select_beacon(
     """
     dataset: Dataset = await Dataset.get_by_id_or_raise(session, body.dataset_id)
 
-    if validate(body.query, dataset):
+    if await validate(body.query, dataset):
         return JSONResponse({"query": body.query, "result": "Ok"}, HTTPStatus.OK)
     return JSONResponse({"query": body.query, "result": "Invalid"}, HTTPStatus.BAD_REQUEST)

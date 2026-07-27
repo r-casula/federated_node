@@ -5,8 +5,7 @@ from typing import Self
 from sqlalchemy import DateTime, ForeignKey, Integer, String, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.orm.properties import MappedColumn
+from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
 from sqlalchemy.sql import func
 
 from app.helpers.base_model import BaseModel
@@ -48,9 +47,7 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
     def _get_client_name(self, user_id: str):
         return f"RequestModel {user_id} - {self.project_name}"
 
-    async def approve(
-        self, session: AsyncSession
-    ) -> dict[str, str]:  # pylint: disable=too-many-locals
+    async def approve(self, session: AsyncSession):
         """
         Method to orchestrate the Keycloak objects creation
         """
@@ -103,7 +100,8 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
                 kc_client.create_policy(
                     {
                         "name": f"{ds.id} - {ds.name} Admin Policy",
-                        "description": f"List of users allowed to administrate the {ds.name} dataset",
+                        "description": "List of users allowed to administrate "
+                        f"the {ds.name} dataset",
                         "logic": "POSITIVE",
                         "roles": [{"id": admin_global_policy["id"], "required": False}],
                     },

@@ -19,9 +19,10 @@ class TaskService:
         session: AsyncSession, request: Request, data: TaskCreate, dry_run: bool = False
     ) -> Task:
         kc_client = Keycloak()
-        user_token = Keycloak.get_token_from_headers(request)
+        user_token = Keycloak.get_token_from_headers()
+        decoded_token = kc_client.decode_token(user_token)
 
-        user = kc_client.get_user_by_id(data.requested_by)
+        user = kc_client.get_user_by_email(decoded_token["email"])
         task_definition: dict[str, Any] = data.model_dump()
         if data.repository:
             ds: Dataset | None = (
@@ -59,6 +60,7 @@ class TaskService:
         )
         task_definition["docker_image"] = image.full_image_name()
         task_definition["regcred_secret"] = image.registry.slugify_name()
+        task_definition["requested_by"] = user["id"]
         task = Task(**task_definition)
         if not dry_run:
             await task.add(session)

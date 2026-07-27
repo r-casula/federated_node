@@ -2,7 +2,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, List, Self
 
-from kubernetes.client import ApiException, V1Secret
+from kubernetes_asyncio.client import ApiException, V1Secret
 from sqlalchemy import Integer, String, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -61,9 +61,9 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
     async def delete(self, session: AsyncSession, _commit: bool = True) -> None:
         async with session.begin_nested() as nested:
             await super().delete(session, False)
-            v1 = KubernetesClient()
+            v1: KubernetesClient = await KubernetesClient.create()
             try:
-                v1.delete_namespaced_secret(
+                await v1.api_client.delete_namespaced_secret(
                     self.get_creds_secret_name(), settings.default_namespace
                 )
             except ApiException as apie:
@@ -90,11 +90,11 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
         cleaned_up_host = re.sub("http(s)*://", "", host)
         return f"{cleaned_up_host}-{re.sub('\\s|_|#', '-', name.lower())}-creds"
 
-    def get_connection_string(self):
+    async def get_connection_string(self):
         """
         From the helper classes, return the correct connection string
         """
-        un, passw = self.get_credentials()
+        un, passw = await self.get_credentials()
         return SUPPORTED_ENGINES[self.type](
             user=un,
             passw=passw,
@@ -104,13 +104,13 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
             args=self.extra_connection_args,
         ).connection_str
 
-    def get_credentials(self) -> tuple:
+    async def get_credentials(self) -> tuple:
         """
         Mostly used to create a direct connection to the DB, i.e. /beacon endpoint
         This is not involved in the Task Execution Service
         """
-        v1 = KubernetesClient()
-        secret: V1Secret = v1.read_namespaced_secret(
+        v1: KubernetesClient = await KubernetesClient.create()
+        secret: V1Secret = await v1.api_client.read_namespaced_secret(
             self.get_creds_secret_name(), settings.default_namespace, pretty="pretty"
         )
         # Doesn't matter which key it's being picked up, the value it's the same

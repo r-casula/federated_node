@@ -373,6 +373,7 @@ class TestSync(BaseTest):
         client,
         post_json_admin_header,
         cr_client,
+        v1_registry_mock,
         tags_request,
         registry,
         expected_image_names,
@@ -405,6 +406,7 @@ class TestSync(BaseTest):
         self,
         client,
         post_json_admin_header,
+        v1_registry_mock,
         cr_name,
         registry
     ):
@@ -434,6 +436,7 @@ class TestSync(BaseTest):
         self,
         client,
         post_json_admin_header,
+        v1_registry_mock,
         registry,
         container,
         container_with_sha,

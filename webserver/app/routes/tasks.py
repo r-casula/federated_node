@@ -82,7 +82,11 @@ async def get_task_id(
 
     await does_user_own_task(request, task)
 
-    return TaskRead.model_validate(task).model_dump()
+    return (
+        TaskRead.model_validate(task)
+        .model_copy(update={"status": await task.update_status()})
+        .model_dump()
+    )
 
 
 @router.post("/{task_id}/cancel", dependencies=[Depends(Auth("can_admin_task"))])
@@ -98,8 +102,10 @@ async def cancel_tasks(
     await does_user_own_task(request, task)
 
     # Should remove pod/stop ML pipeline
-    task.terminate_pod()
-    return TaskRead.model_validate(task).model_dump()
+    await task.terminate_pod(session)
+    return (
+        TaskRead.model_validate(task).model_copy(update={"status": task.pod_status}).model_dump()
+    )
 
 
 @router.post(
@@ -115,9 +121,9 @@ async def post_tasks(
     POST /tasks endpoint. Creates a new task
     """
     try:
-        task = await TaskService.add(session, request, data=body)
+        task: Task = await TaskService.add(session, request, data=body)
         # Create pod/start ML pipeline
-        task.run()
+        await task.run()
         return TaskRead.model_validate(task).model_dump()
     except Exception:
         await session.rollback()
@@ -152,7 +158,7 @@ async def get_task_results(
     await does_user_own_task(request, task)
 
     kc_client = Keycloak()
-    token = kc_client.get_token_from_headers()
+    token = kc_client.get_token_from_headers(request)
     # admin should be able to fetch them regardless
     if settings.task_review and not task.review_status and not kc_client.is_user_admin(token):
         return JSONResponse(
@@ -166,7 +172,7 @@ async def get_task_results(
             status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
         )
 
-    results_file = task.get_results()
+    results_file: str = await task.get_results()
     return FileResponse(
         results_file,
         filename=f"{settings.public_url}-{task_id}-results.zip",
@@ -186,7 +192,7 @@ async def get_tasks_logs(
 
     await does_user_own_task(request, task)
 
-    return {"logs": task.get_logs()}
+    return {"logs": await task.get_logs()}
 
 
 @router.post(
@@ -212,8 +218,8 @@ async def approve_results(
         raise InvalidRequest("Task has been already reviewed")
 
     # Also update the CRD if needed
-    if task.get_task_crd():
-        task.update_task_crd(True)
+    if await task.get_task_crd():
+        await task.update_task_crd(True)
 
     await task.update(session, {"review_status": True})
 
@@ -243,8 +249,8 @@ async def block_results(
         raise InvalidRequest("Task has been already reviewed")
 
     # Also update the CRD if needed
-    if task.get_task_crd():
-        task.update_task_crd(False)
+    if await task.get_task_crd():
+        await task.update_task_crd(False)
 
     await task.update(session, {"review_status": False})
 
