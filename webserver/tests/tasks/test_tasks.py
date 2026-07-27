@@ -22,6 +22,7 @@ class TestGetTasks(BaseTest):
             self,
             client,
             simple_admin_header,
+            mock_kc_client_task_model
         ):
         """
         Tests that admin users can see the list of tasks
@@ -37,12 +38,13 @@ class TestGetTasks(BaseTest):
             self,
             client,
             simple_user_header,
-            mock_kc_client
+            mock_kc_client_task_model,
+            base_kc_mock_args
         ):
         """
         Tests that non-admin users cannot see the list of tasks
         """
-        mock_kc_client["wrappers_kc"].return_value.is_token_valid.return_value = False
+        base_kc_mock_args.is_token_valid.return_value = False
 
         response = await client.get(
             '/tasks',
@@ -53,21 +55,21 @@ class TestGetTasks(BaseTest):
     @mark.asyncio
     async def test_get_task_by_id_admin(
             self,
-            mock_kc_client,
-            cr_client,
             post_json_user_header,
             simple_admin_header,
             client,
             registry_client,
             v1_registry_mock,
             v1_task_mock,
-            task_body
+            task_body,
+            mock_kc_client_task_model,
+            base_kc_mock_args
         ):
         """
         If an admin wants to check a specific task they should be allowed regardless
         of who requested it
         """
-        mock_kc_client["tasks_api_kc"].return_value.get_user_by_id.return_value = {"username": "user"}
+        base_kc_mock_args.get_user_by_id.return_value = {"username": "user"}
         resp = await client.post(
             '/tasks',
             json=task_body,
@@ -89,14 +91,15 @@ class TestGetTasks(BaseTest):
             client,
             basic_user,
             task,
-            mock_kc_client
+            mock_kc_client_task_model,
+            base_kc_mock_args
         ):
         """
         If a user wants to check a specific task they should be allowed if they did request it
         """
         decode_return = {"sub": basic_user["id"]}
         decode_return.update(basic_user)
-        mock_kc_client["tasks_api_kc"].return_value.decode_token.return_value = decode_return
+        base_kc_mock_args.decode_token.return_value = decode_return
 
         t: Task = await Task.get_by_id_or_raise(self.db_session, task.id)
         t.requested_by = basic_user["id"]
@@ -112,14 +115,15 @@ class TestGetTasks(BaseTest):
             simple_user_header,
             client,
             task,
-            mock_kc_client
+            mock_kc_client_task_model,
+            base_kc_mock_args
         ):
         """
         If a user wants to check a specific task they should not be allowed if they did not request it
         """
         task_obj = await self.db_session.get(Task, task.id)
         task_obj.requested_by = "some random uuid"
-        mock_kc_client["wrappers_kc"].return_value.is_token_valid.return_value = False
+        base_kc_mock_args.is_token_valid.return_value = False
 
         resp = await client.get(
             f'/tasks/{task.id}',
@@ -130,7 +134,6 @@ class TestGetTasks(BaseTest):
     @mark.asyncio
     async def test_get_task_status_running_and_waiting(
             self,
-            cr_client,
             registry_client,
             running_state,
             waiting_state,
@@ -138,7 +141,8 @@ class TestGetTasks(BaseTest):
             client,
             task_body,
             mocker,
-            task
+            task,
+            mock_kc_client_task_model
         ):
         """
         Test to verify the correct task status when it's
@@ -188,7 +192,8 @@ class TestGetTasks(BaseTest):
             client,
             task_body,
             mocker,
-            task
+            task,
+            mock_kc_client_task_model
         ):
         """
         Test to verify the correct task status when it's terminated on k8s
@@ -222,13 +227,13 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             v1_task_mock,
             mock_args_k8s,
             registry_client,
             task_body,
+            mock_kc_client_task_service,
             mock_args_crd,
             v1_crd_mock
         ):
@@ -257,7 +262,8 @@ class TestPostTask(BaseTest):
             container,
             cr_name,
             registry,
-            tags_request
+            tags_request,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns an error when name is empty or null
@@ -278,7 +284,8 @@ class TestPostTask(BaseTest):
             post_json_admin_header,
             client,
             task_body,
-            container
+            container,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns an error when the image does not have a tag or sha
@@ -302,7 +309,8 @@ class TestPostTask(BaseTest):
             container,
             cr_name,
             registry,
-            tags_request
+            tags_request,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns an error when name is empty or null
@@ -322,13 +330,13 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_no_db_query(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             v1_task_mock,
             mock_args_k8s,
             registry_client,
-            task_body
+            task_body,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 201, if the db_query field
@@ -356,14 +364,14 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_automatic_delivery_via_crd(
         self,
-        cr_client,
         registry_client,
         post_json_admin_header,
         set_task_other_delivery_allowed_env,
         client,
         v1_crd_mock,
         task_body,
-        mock_args_crd
+        mock_args_crd,
+        mock_kc_client_task_service
     ):
         """
         Tests that with the right conditions (from env variables)
@@ -380,14 +388,14 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_automatic_delivery_via_crd_is_not_performed(
         self,
-        cr_client,
         registry_client,
         post_json_admin_header,
         client,
         v1_crd_mock,
         task_body,
         mocker,
-        mock_args_crd
+        mock_args_crd,
+        mock_kc_client_task_service
     ):
         """
         Tests that with the missing conditions (from env variables)
@@ -422,7 +430,8 @@ class TestPostTask(BaseTest):
             v1_task_mock,
             registry_client,
             task_body,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns an error if the db_query is
@@ -441,12 +450,11 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_invalid_output_field(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             task_body,
-
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 4xx request when output
@@ -464,13 +472,13 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_no_output_field_reverts_to_default(
             self,
-            cr_client,
             v1_task_mock,
             post_json_admin_header,
             client,
             registry_client,
             task_body,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 201 but the volume mounted
@@ -491,13 +499,12 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_with_ds_name(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             dataset,
             task_body,
-
+            mock_kc_client_task_service
         ):
         """
         Tests task creation with a dataset name returns 201
@@ -516,13 +523,12 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_with_ds_name_and_id(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             dataset,
             task_body,
-
+            mock_kc_client_task_service
         ):
         """
         Tests task creation with a dataset name and id returns 201
@@ -540,12 +546,12 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_with_conflicting_ds_name_and_id(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             dataset,
             registry_client,
-            task_body
+            task_body,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation with a dataset name that does not exists
@@ -566,11 +572,11 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_with_non_existing_dataset(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             task_body,
-            registry_client
+            registry_client,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 404 when the requested dataset doesn't exist
@@ -589,12 +595,12 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_with_non_existing_dataset_name(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             dataset,
             task_body,
-            registry_client
+            registry_client,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 404 when the
@@ -612,17 +618,17 @@ class TestPostTask(BaseTest):
         assert response.status_code == 404
         assert response.json() == {"error": "Dataset something else does not exist"}
 
-    @patch('app.helpers.wrappers.Keycloak.is_token_valid', return_value=False)
+    @patch('app.helpers.wrappers.Keycloak.create.is_token_valid', return_value=False)
     @mark.asyncio
     async def test_create_unauthorized_task(
             self,
             kc_valid_mock,
-            cr_client,
             post_json_user_header,
             dataset,
             client,
             task_body,
-            mock_kc_client
+            base_kc_mock_args,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 403 if a user is not authorized to
@@ -631,7 +637,7 @@ class TestPostTask(BaseTest):
         data = task_body
         data["dataset_id"] = dataset.id
 
-        mock_kc_client["wrappers_kc"].return_value.is_token_valid.return_value = False
+        base_kc_mock_args.is_token_valid.return_value = False
 
         response = await client.post(
             '/tasks',
@@ -643,7 +649,6 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_image_with_digest(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             v1_task_mock,
@@ -652,7 +657,8 @@ class TestPostTask(BaseTest):
             mock_args_crd,
             container_with_sha,
             task_body,
-            v1_crd_mock
+            v1_crd_mock,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 201 with the image sha rather than
@@ -671,14 +677,14 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_image_same_name_different_registry(
             self,
-            cr_client,
             v1_task_mock,
             registry_client,
             post_json_admin_header,
             client,
             container,
             task_body,
-            db_session
+            db_session,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation is successful if two images are mapped with the
@@ -701,7 +707,7 @@ class TestPostTask(BaseTest):
             post_json_admin_header,
             client,
             task_body,
-
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 500 with a requested docker image is not found
@@ -717,13 +723,13 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_inputs_not_default(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             v1_task_mock,
             task_body,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 201 and if users provide
@@ -748,13 +754,13 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_input_path_env_var_override(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             v1_task_mock,
             task_body,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 201 and if users provide
@@ -776,12 +782,11 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_invalid_output_field(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             task_body,
-
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 4xx request when output
@@ -799,11 +804,11 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_invalid_inputs_field(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             task_body,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 4xx request when inputs
@@ -821,13 +826,13 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_no_output_field_reverts_to_default(
             self,
-            cr_client,
             v1_task_mock,
             post_json_admin_header,
             client,
             registry_client,
             task_body,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 201 but the resutls volume mounted
@@ -848,13 +853,13 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_no_inputs_field_reverts_to_default(
             self,
-            cr_client,
             v1_task_mock,
             post_json_admin_header,
             client,
             registry_client,
             task_body,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
         ):
         """
         Tests task creation returns 201 but the volume mounted
@@ -875,13 +880,13 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_create_task_controller_not_deployed_no_crd(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             k8s_client,
             task_body,
             v1_crd_mock,
+            mock_kc_client_task_service,
             mock_args_crd
         ):
         """
@@ -894,18 +899,43 @@ class TestPostTask(BaseTest):
             headers=post_json_admin_header
         )
         assert response.status_code == 201
-        mock_args_crd.api_client.create_cluster_custom_object.assert_not_called()
+        v1_crd_mock.return_value.create_cluster_custom_object.assert_not_called()
+
+    @mark.asyncio
+    async def test_create_task_controller_deployed_create_crd(
+            self,
+            post_json_admin_header,
+            client,
+            registry_client,
+            set_task_controller_env,
+            k8s_client,
+            task_body,
+            v1_crd_mock,
+            mock_args_crd,
+            mock_kc_client_task_service
+        ):
+        """
+        Tests task creation returns 201. It should try to
+        create a CRD if the task controller is deployed
+        """
+        response = await client.post(
+            '/tasks',
+            data=json.dumps(task_body),
+            headers=post_json_admin_header
+        )
+        assert response.status_code == 201
+        mock_args_crd.api_client.create_cluster_custom_object.assert_called()
 
     @mark.asyncio
     async def test_create_task_from_controller(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
             k8s_client,
             v1_crd_mock,
             task_body,
+            mock_kc_client_task_service,
             mock_args_crd
         ):
         """
@@ -924,7 +954,6 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_task_dataset_with_repo(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
@@ -932,6 +961,7 @@ class TestPostTask(BaseTest):
             v1_crd_mock,
             task_body,
             dataset_with_repo,
+            mock_kc_client_task_service,
             mock_args_crd
         ):
         """
@@ -951,7 +981,6 @@ class TestPostTask(BaseTest):
     @mark.asyncio
     async def test_task_dataset_with_repo_unlinked(
             self,
-            cr_client,
             post_json_admin_header,
             client,
             registry_client,
@@ -959,6 +988,7 @@ class TestPostTask(BaseTest):
             v1_crd_mock,
             task_body,
             dataset_with_repo,
+            mock_kc_client_task_service,
             mock_args_crd
         ):
         """
@@ -981,10 +1011,10 @@ class TestPostTask(BaseTest):
     async def test_task_schema_env_variables(
             self,
             task,
-            cr_client,
             v1_task_mock,
             registry_client,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
     ):
         """
         Simple test to make sure the environment passed to the pod includes
@@ -1001,10 +1031,10 @@ class TestPostTask(BaseTest):
     async def test_task_connection_string_postgres(
             self,
             task,
-            cr_client,
             v1_task_mock,
             registry_client,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
     ):
         """
         Simple test to make sure the generated connection string
@@ -1021,10 +1051,10 @@ class TestPostTask(BaseTest):
     async def test_task_connection_string_oracle(
             self,
             task_oracle,
-            cr_client,
             v1_task_mock,
             registry_client,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
     ):
         """
         Simple test to make sure the generated connection string
@@ -1045,7 +1075,8 @@ class TestCancelTask:
             client,
             simple_admin_header,
             task,
-            v1_task_mock
+            v1_task_mock,
+            mock_kc_client_task_service
         ):
         """
         Test that an admin can cancel an existing task
@@ -1061,7 +1092,8 @@ class TestCancelTask:
     async def test_cancel_404_task(
             self,
             client,
-            simple_admin_header
+            simple_admin_header,
+            mock_kc_client_task_service
         ):
         """
         Test that an admin can cancel a non-existing task returns a 404
@@ -1079,9 +1111,9 @@ class TestValidateTask:
             self,
             client,
             task_body,
-            cr_client,
             registry_client,
             post_json_admin_header,
+            mock_kc_client_task_service
         ):
         """
         Test the validation endpoint can be used by admins returns 201
@@ -1098,9 +1130,9 @@ class TestValidateTask:
             self,
             client,
             task_body,
-            cr_client,
             registry_client,
-            post_json_admin_header
+            post_json_admin_header,
+            mock_kc_client_task_service
         ):
         """
         Test the validation endpoint can be used by admins returns
@@ -1120,17 +1152,17 @@ class TestValidateTask:
             self,
             client,
             task_body,
-            cr_client,
             registry_client,
             post_json_user_header: dict[str, str],
             access_request,
             user_uuid,
-            mock_kc_client
+            base_kc_mock_args,
+            mock_kc_client_task_service
         ):
         """
         Test the validation endpoint can be used by non-admins returns 201
         """
-        mock_kc_client["wrappers_kc"].return_value.get_user_by_username.return_value = {"id": user_uuid}
+        base_kc_mock_args.get_user_by_username.return_value = {"id": user_uuid}
 
         post_json_user_header["project-name"] = access_request.project_name
         response = await client.post(
@@ -1150,7 +1182,8 @@ class TestTasksLogs:
             mocker,
             terminated_state,
             task,
-            v1_task_mock
+            v1_task_mock,
+            mock_kc_client_task_service
         ):
         """
         Basic test that will allow us to return
@@ -1180,7 +1213,8 @@ class TestTasksLogs:
             post_json_admin_header,
             client,
             task,
-            v1_task_mock
+            v1_task_mock,
+            mock_kc_client_task_service
         ):
         """
         Basic test that will check the appropriate error
@@ -1203,7 +1237,8 @@ class TestTasksLogs:
             task,
             v1_task_mock,
             pod_listed,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
         ):
         """
         Basic test that will try to get logs for a pod
@@ -1224,7 +1259,8 @@ class TestTasksLogs:
             client,
             mocker,
             task,
-            v1_task_mock
+            v1_task_mock,
+            mock_kc_client_task_service
         ):
         """
         Basic test that will try to get the logs from a missing
@@ -1251,7 +1287,8 @@ class TestTasksLogs:
             task,
             terminated_state,
             v1_task_mock,
-            mock_args_k8s
+            mock_args_k8s,
+            mock_kc_client_task_service
         ):
         """
         Basic test that will try to get the logs, but k8s

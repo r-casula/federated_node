@@ -53,29 +53,29 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
         """
         self.proj_end = self.proj_end.replace(hour=23, minute=59)
         try:
-            global_kc_client = Keycloak()
-            user = global_kc_client.get_user_by_id(self.requested_by)
+            global_kc_client = await Keycloak.create()
+            user = await global_kc_client.get_user_by_id(self.requested_by)
 
-            admin_global_policy = global_kc_client.get_role("Administrator")
-            system_global_policy = global_kc_client.get_role("System")
+            admin_global_policy = await global_kc_client.get_role("Administrator")
+            system_global_policy = await global_kc_client.get_role("System")
 
             new_client_name = self._get_client_name(user["email"])
             token_lifetime = (self.proj_end - dt.now()).seconds
 
             logger.info("Creating client %s", new_client_name)
-            global_kc_client.create_client(new_client_name, token_lifetime)
+            await global_kc_client.create_client(new_client_name, token_lifetime)
 
             logger.info("%s - Getting admin token", new_client_name)
-            kc_client = Keycloak(new_client_name)
+            kc_client = await Keycloak.create(new_client_name)
             logger.info("%s - Token exchange", new_client_name)
-            kc_client.enable_token_exchange()
+            await kc_client.enable_token_exchange()
 
             scopes = ["can_admin_dataset", "can_exec_task", "can_admin_task", "can_access_dataset"]
 
             logger.info("%s - Creating scopes", new_client_name)
             created_scopes = []
             for scope in scopes:
-                created_scopes.append(kc_client.create_scope(scope))
+                created_scopes.append(await kc_client.create_scope(scope))
 
             q = select(Dataset).where(Dataset.id == self.dataset_id)
             ds = (await session.execute(q)).scalars().one_or_none()
@@ -83,7 +83,7 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
                 raise DBError("Dataset not found")
 
             logger.info("%s - Creating resource", new_client_name)
-            resource = kc_client.create_resource(
+            resource = await kc_client.create_resource(
                 {
                     "name": f"{ds.id}-{ds.name}",
                     "owner": {"id": kc_client.client_id, "name": new_client_name},
@@ -97,7 +97,7 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
             policies = []
             # Create admin policy
             policies.append(
-                kc_client.create_policy(
+                await kc_client.create_policy(
                     {
                         "name": f"{ds.id} - {ds.name} Admin Policy",
                         "description": "List of users allowed to administrate "
@@ -110,11 +110,11 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
             )
             # Create system policy
             policies.append(
-                kc_client.create_policy(
+                await kc_client.create_policy(
                     {
                         "name": f"{ds.id} - {ds.name} System Policy",
-                        "description": f"""List of users allowed to perform automated
-                                actions on the {ds.name} dataset""",
+                        "description": "List of users allowed to perform automated actions "
+                        f"on the {ds.name} dataset",
                         "logic": "POSITIVE",
                         "roles": [{"id": system_global_policy["id"], "required": False}],
                     },
@@ -122,11 +122,11 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
                 )
             )
             # Create the requester's policy
-            user_policy = kc_client.create_policy(
+            user_policy = await kc_client.create_policy(
                 {
                     "name": f"{ds.id} - {ds.name} User {user["id"]} Policy",
-                    "description": f"""User specific permission to
-                                perform actions on the {ds.name} dataset""",
+                    "description": "User specific permission to perform actions "
+                    f"on the {ds.name} dataset",
                     "logic": "POSITIVE",
                     "decisionStrategy": "UNANIMOUS",
                     "type": "user",
@@ -135,11 +135,11 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
                 "/user",
             )
             # Create project date policy
-            date_range_policy = kc_client.create_or_update_time_policy(
+            date_range_policy = await kc_client.create_or_update_time_policy(
                 {
                     "name": f"{user["id"]} Date access policy",
-                    "description": """Date range to allow the user to access
-                                a dataset within this project""",
+                    "description": "Date range to allow the user to "
+                    "access a dataset within this project",
                     "logic": "POSITIVE",
                     "notBefore": self.proj_start.strftime("%Y-%m-%d %H:%M:%S"),
                     "notOnOrAfter": self.proj_end.strftime("%Y-%m-%d %H:%M:%S"),
@@ -149,11 +149,11 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
 
             logger.info("%s - Creating permissions", new_client_name)
             # Admin permission
-            kc_client.create_permission(
+            await kc_client.create_permission(
                 {
                     "name": f"{ds.id}-{ds.name} Administration Permission",
-                    "description": "List of policies that will allow certain "
-                    "users or roles to administrate the dataset",
+                    "description": "List of policies that will allow certain users "
+                    "or roles to administrate the dataset",
                     "type": "resource",
                     "logic": "POSITIVE",
                     "decisionStrategy": "AFFIRMATIVE",
@@ -163,7 +163,7 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
                 }
             )
             # User permission
-            kc_client.create_permission(
+            await kc_client.create_permission(
                 {
                     "name": f"{ds.id}-{ds.name} User {user["id"]} Permission",
                     "description": "List of policies that will allow certain users "
@@ -178,7 +178,7 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
             )
 
             logger.info("%s - Impersonation token", new_client_name)
-            ret_response = {"token": kc_client.get_impersonation_token(user["id"])}
+            ret_response = {"token": await kc_client.get_impersonation_token(user["id"])}
 
             logger.info("Updating DB")
             await self.update(

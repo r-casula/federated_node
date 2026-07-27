@@ -124,7 +124,7 @@ class TestRequests(BaseTest):
         """
         email_req = json.loads(access_request.requested_by)["email"]
         response_approval = await self.approve_request(client, access_request.id, simple_admin_header)
-        kc_client = Keycloak(f"RequestModel {email_req} - {access_request.project_name}")
+        kc_client = await Keycloak.create(f"RequestModel {email_req} - {access_request.project_name}")
         assert kc_client.get_resource(f"{dataset.id}-{dataset.name}") is not None
 
         response_ds = await client.get(
@@ -207,7 +207,7 @@ class TestRequests(BaseTest):
         req_id = response_req['request_id']
 
         await self.approve_request(client, req_id, simple_admin_header)
-        kc_client = Keycloak(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
+        kc_client = await Keycloak.create(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
         assert kc_client.get_resource(f"{dataset.id}-{dataset.name}") is not None
 
         # Second request
@@ -216,7 +216,7 @@ class TestRequests(BaseTest):
         req_id = response_req['request_id']
 
         await self.approve_request(client, req_id, simple_admin_header)
-        kc_client2 = Keycloak(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
+        kc_client2 = await Keycloak.create(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
         assert kc_client2.get_resource(f"{dataset_oracle.id}-{dataset_oracle.name}") is not None
 
         # Cleanup
@@ -249,7 +249,7 @@ class TestRequests(BaseTest):
         req_id = response_req['request_id']
 
         response_approval = await self.approve_request(client, req_id, simple_admin_header)
-        kc_client = Keycloak(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
+        kc_client = await Keycloak.create(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
         assert kc_client.get_resource(f"{dataset.id}-{dataset.name}") is not None
 
 
@@ -290,7 +290,7 @@ class TestRequests(BaseTest):
         req_id = response_req['request_id']
 
         response_approval = await self.approve_request(client, req_id, simple_admin_header)
-        kc_client = Keycloak(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
+        kc_client = await Keycloak.create(f"RequestModel {request_base_body["requested_by"]["email"]} - {request_base_body["project_name"]}")
         assert kc_client.get_resource(f"{dataset.id}-{dataset.name}") is not None
 
 

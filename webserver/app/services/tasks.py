@@ -18,11 +18,11 @@ class TaskService:
     async def add(
         session: AsyncSession, request: Request, data: TaskCreate, dry_run: bool = False
     ) -> Task:
-        kc_client = Keycloak()
-        user_token = Keycloak.get_token_from_headers()
-        decoded_token = kc_client.decode_token(user_token)
+        kc_client = await Keycloak.create()
+        user_token = await Keycloak.get_token_from_headers(request)
+        decoded_token = await kc_client.decode_token(user_token)
 
-        user = kc_client.get_user_by_email(decoded_token["email"])
+        user = await kc_client.get_user_by_email(decoded_token["email"])
         task_definition: dict[str, Any] = data.model_dump()
         if data.repository:
             ds: Dataset | None = (
@@ -39,7 +39,7 @@ class TaskService:
 
             task_definition["dataset_id"] = ds.id
 
-        elif kc_client.is_user_admin(user_token):
+        elif await kc_client.is_user_admin(user_token):
             ds_id = data.tags.get("dataset_id")
             ds_name = data.tags.get("dataset_name")
             if ds_name or ds_id:

@@ -48,6 +48,7 @@ line_length = 99
 dev = [
     "pylint>=3.0.3",
     "pytest-asyncio>=1.2.0",
+    "respx>=0.22.0",
     "pytest",
     "pytest-env",
     "pytest-mock",
