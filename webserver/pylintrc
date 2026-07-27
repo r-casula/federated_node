@@ -16,4 +16,6 @@ disable=raw-checker-failed,
         suppressed-message,
         useless-suppression,
         deprecated-pragma,
-        missing-timeout
+        missing-timeout,
+        missing-module-docstring,
+        not-callable

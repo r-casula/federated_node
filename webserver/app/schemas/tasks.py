@@ -1,11 +1,16 @@
 import re
-from typing import List, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator, computed_field, model_validator
 from datetime import datetime as dt
+from typing import List, Optional
 
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
-from app.helpers.exceptions import InvalidRequest
-from app.helpers.const import CPU_RESOURCE_REGEX, MEMORY_RESOURCE_REGEX, MEMORY_UNITS, TASK_POD_INPUTS_PATH, REVIEW_STATUS
+from app.helpers.const import (
+    CPU_RESOURCE_REGEX,
+    MEMORY_RESOURCE_REGEX,
+    MEMORY_UNITS,
+    REVIEW_STATUS,
+    TASK_POD_INPUTS_PATH,
+)
 from app.helpers.exceptions import InvalidRequest
 from app.helpers.settings import settings
 from app.schemas.containers import ContainerCreate
@@ -39,7 +44,7 @@ class TaskCreate(TaskBase):
     tags: Optional[dict] = Field(default={}, exclude=True)
 
     @classmethod
-    def validate_cpu_resources(cls, limit_value:str, request_value:str):
+    def validate_cpu_resources(cls, limit_value: str, request_value: str):
         """
         Given a value for the cpu limits or requests, make sure it conforms to
         accepted k8s values.
@@ -54,11 +59,13 @@ class TaskCreate(TaskBase):
             cpu_error_message = f"Cpu resource value {value} not valid."
             if not re.match(CPU_RESOURCE_REGEX, value):
                 raise InvalidRequest(cpu_error_message)
-        if cls.convert_cpu_values_to_int(limit_value) < cls.convert_cpu_values_to_int(request_value):
+        if cls.convert_cpu_values_to_int(limit_value) < cls.convert_cpu_values_to_int(
+            request_value
+        ):
             raise InvalidRequest("Cpu limit cannot be lower than request")
 
     @classmethod
-    def validate_memory_resources(cls, limit_value:str, request_value:str):
+    def validate_memory_resources(cls, limit_value: str, request_value: str):
         """
         Given a value for the memory limits or requests, make sure it conforms to
         accepted k8s values.
@@ -75,42 +82,44 @@ class TaskCreate(TaskBase):
             memory_error_msg = f"Memory resource value {value} not valid."
             if not re.match(MEMORY_RESOURCE_REGEX, value):
                 raise InvalidRequest(memory_error_msg)
-        if cls.convert_memory_values_to_int(limit_value) < cls.convert_memory_values_to_int(request_value):
+        if cls.convert_memory_values_to_int(limit_value) < cls.convert_memory_values_to_int(
+            request_value
+        ):
             raise InvalidRequest("Memory limit cannot be lower than request")
 
     @classmethod
-    def convert_cpu_values_to_int(cls, val:str) -> float:
+    def convert_cpu_values_to_int(cls, val: str) -> float:
         """
         Since cpu values can come with different units,
         they should be standardized to float, so that they can
         be compared and validated to have limits > requests
         """
-        if re.match(r'^\d+$', val):
+        if re.match(r"^\d+$", val):
             return float(val)
-        if re.match(r'^\d+\.\d+$', val):
+        if re.match(r"^\d+\.\d+$", val):
             return float(val)
         return float(val[:-1]) / 1000
 
     @classmethod
-    def convert_memory_values_to_int(cls, val:str) -> int:
+    def convert_memory_values_to_int(cls, val: str) -> int:
         """
         Since memory values can come with different units,
         they should be standardized to int, so that they can
         be compared and validated to have limits > requests
         """
-        if re.match(r'^\d+$', val):
+        if re.match(r"^\d+$", val):
             return int(val)
-        if re.match(r'^\d+e\d+$', val):
-            base, exp = val.split('e')
-            return int(base) * 10**(int(exp))
+        if re.match(r"^\d+e\d+$", val):
+            base, exp = val.split("e")
+            return int(base) * 10 ** (int(exp))
 
         # Other accepted formats trail with some letters
-        unit_index = re.search(r'[^\d]+$', val).span()[0]
+        unit_index = re.search(r"[^\d]+$", val).span()[0]
         base = val[:unit_index]
         unit = val[unit_index:]
         return int(base) * MEMORY_UNITS[unit]
 
-    @model_validator(mode='before')
+    @model_validator(mode="before")
     @classmethod
     def extract_fields(cls, data: dict):
         executors = data["executors"][0]
@@ -124,11 +133,11 @@ class TaskCreate(TaskBase):
 
         # Output volumes validation
         if not isinstance(data.get("outputs", {}), dict):
-            raise InvalidRequest("\"outputs\" field must be a json object or dictionary")
+            raise InvalidRequest('"outputs" field must be a json object or dictionary')
         if not data.get("outputs", {}):
             data["outputs"] = {"results": settings.task_pod_results_path}
         if not isinstance(data.get("inputs", {}), dict):
-            raise InvalidRequest("\"inputs\" field must be a json object or dictionary")
+            raise InvalidRequest('"inputs" field must be a json object or dictionary')
         if not data.get("inputs", {}):
             data["inputs"] = {"inputs.csv": TASK_POD_INPUTS_PATH}
 
@@ -136,18 +145,18 @@ class TaskCreate(TaskBase):
         if "resources" in data:
             cls.validate_cpu_resources(
                 data["resources"].get("limits", {}).get("cpu"),
-                data["resources"].get("requests", {}).get("cpu")
+                data["resources"].get("requests", {}).get("cpu"),
             )
             cls.validate_memory_resources(
                 data["resources"].get("limits", {}).get("memory"),
-                data["resources"].get("requests", {}).get("memory")
+                data["resources"].get("requests", {}).get("memory"),
             )
         if data.get("db_query") is not None and "query" not in data["db_query"]:
             raise InvalidRequest("`db_query` field must include a `query`")
 
         return data
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
         name = (v or "").replace(" ", "")
@@ -160,8 +169,8 @@ class TaskCreate(TaskBase):
 class TaskRead(TaskBase):
     id: int
     dataset_id: int
-    status: str|dict = "scheduled"
-    review_status: bool|None = Field(exclude=True)
+    status: str | dict = "scheduled"
+    review_status: bool | None = Field(exclude=True)
     dataset_id: int
     requested_by: Optional[str] = None
     created_at: Optional[dt] = None
@@ -171,6 +180,7 @@ class TaskRead(TaskBase):
     @property
     def review(self) -> str:
         return REVIEW_STATUS[self.review_status]
+
 
 class TaskFilters(BaseModel):
     id__lte: Optional[int] = None

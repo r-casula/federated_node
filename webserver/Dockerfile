@@ -35,5 +35,5 @@ RUN groupadd -g "$USER_GID" "$USERNAME" \
 ENV PATH="/.venv/bin:$PATH"
 USER ${USER_UID}
 EXPOSE 5000
-WORKDIR /
-ENTRYPOINT [ "waitress-serve", "--host=0.0.0.0", "--port=5000", "--call", "app:create_app"]
+
+ENTRYPOINT ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "5000"]

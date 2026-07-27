@@ -59,6 +59,7 @@ class TestGetTasks(BaseTest):
             simple_admin_header,
             client,
             registry_client,
+            v1_registry_mock,
             v1_task_mock,
             task_body,
             mock_kc_client_task_model,
@@ -100,7 +101,7 @@ class TestGetTasks(BaseTest):
         decode_return.update(basic_user)
         base_kc_mock_args.decode_token.return_value = decode_return
 
-        t = await Task.get_by_id(self.db_session, task.id)
+        t: Task = await Task.get_by_id_or_raise(self.db_session, task.id)
         t.requested_by = basic_user["id"]
         resp = await client.get(
             f'/tasks/{task.id}',
@@ -297,7 +298,7 @@ class TestPostTask(BaseTest):
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json()["error"] == f"{tagless_image} does not have a tag. Please provide one in the format <image>:<tag> or <image>@sha256.."
+        assert response.json()["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
 
     @mark.asyncio
     async def test_create_task_space_name_fails(

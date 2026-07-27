@@ -54,6 +54,20 @@ def job_dict():
     }
 
 class TestKubernetesHelper:
+    @fixture(autouse=True)
+    def mock_k8s_config(self, mocker):
+        """
+        `KubernetesClient.create()` initializes the shared client by loading a
+        kube-config. There is none in the test environment, so mock the async
+        loaders and reset the cached singleton to keep tests isolated.
+        """
+        import app.helpers.kubernetes_manager as k8s_manager
+        k8s_manager._k8s_base.api_client = None
+        mocker.patch.object(k8s_manager.config, 'load_kube_config', new=AsyncMock())
+        mocker.patch.object(k8s_manager.config, 'load_incluster_config', new=AsyncMock())
+        yield
+        k8s_manager._k8s_base.api_client = None
+
     @fixture
     def mock_ws_api_client(self):
         with patch('kubernetes_asyncio.stream.WsApiClient') as mock_class:

@@ -1,8 +1,9 @@
-from pydantic import BaseModel, ConfigDict
 from typing import Generic, List, TypeVar
 
+from pydantic import BaseModel, ConfigDict
 
 T = TypeVar("T")
+
 
 class PageResponse(BaseModel, Generic[T]):
     items: List[T]

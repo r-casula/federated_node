@@ -104,7 +104,7 @@ def terminated_state():
 @fixture
 def results_job_mock(mocker, task_body, mock_args_batch_k8s):
     mocker.patch(
-        'app.models.task.Task.status',
+        'app.models.task.Task.pod_status',
         return_value={"running": {}}
     )
     mocker.patch('app.models.task.uuid4', return_value="1dc6c6d1-417f-409a-8f85-cb9d20f7c741")

@@ -1,17 +1,17 @@
 import json
 import logging
+
 from kubernetes_asyncio.client.exceptions import ApiException
 from kubernetes_asyncio.client.models.v1_secret import V1Secret
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.registry import Registry
 from app.helpers.container_registries import BaseRegistry, DockerRegistry
 from app.helpers.exceptions import InvalidRequest
 from app.helpers.kubernetes import KubernetesClient
 from app.helpers.settings import settings
+from app.models.registry import Registry
 from app.schemas.registries import RegistryCreate, RegistryUpdate
-
 
 logger = logging.getLogger("registry_service")
 logger.setLevel(logging.INFO)
@@ -19,7 +19,7 @@ logger.setLevel(logging.INFO)
 
 class RegistryService:
     @staticmethod
-    async def add(session:AsyncSession, data: RegistryCreate) -> Registry:
+    async def add(session: AsyncSession, data: RegistryCreate) -> Registry:
         q = select(Registry).where(Registry.url == data.url)
         if (await session.execute(q)).one_or_none():
             raise InvalidRequest(f"Registry {data.url} already exist")
@@ -33,7 +33,7 @@ class RegistryService:
             await reg.update_regcred()
             await reg.add(session, False)
             await session.commit()
-        except:
+        except Exception:
             await session.rollback()
             raise
 
@@ -41,7 +41,7 @@ class RegistryService:
         return reg
 
     @staticmethod
-    async def update(session:AsyncSession, registry:Registry, data: RegistryUpdate) -> None:
+    async def update(session: AsyncSession, registry: Registry, data: RegistryUpdate) -> None:
         """
         Updates the instance with new values. These should be
         already validated.
@@ -49,7 +49,7 @@ class RegistryService:
         if data.active is not None:
             await registry.update(session, {"active": data.active})
 
-        if not(data.username or data.password):
+        if not (data.username or data.password):
             return
 
         # Get the credentials from the pull docker secret
@@ -61,11 +61,9 @@ class RegistryService:
             regcred: V1Secret = await v1.api_client.read_namespaced_secret(
                 registry.slugify_name(), namespace=settings.task_namespace
             )
-            dockerjson = json.loads(
-                v1.decode_secret_value(regcred.data['.dockerconfigjson'])
-            )
-            registry.username = dockerjson['auths'][key]["username"]
-            registry.password = dockerjson['auths'][key]["password"]
+            dockerjson = json.loads(v1.decode_secret_value(regcred.data[".dockerconfigjson"]))
+            registry.username = dockerjson["auths"][key]["username"]
+            registry.password = dockerjson["auths"][key]["password"]
 
             if data.username:
                 registry.username = data.username

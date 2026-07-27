@@ -1,17 +1,15 @@
 from typing import Any
 
-from sqlalchemy import func, DateTime, select
 from pydantic import BaseModel
+from sqlalchemy import DateTime, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.helpers.base_model import BaseModel as DBBaseModel
 
 
 async def apply_filters(
-        db: AsyncSession,
-        model: DBBaseModel,
-        filter_dto: BaseModel,
-        as_pagination:bool = True
-    )-> dict[str, Any] | Any:
+    db: AsyncSession, model: DBBaseModel, filter_dto: BaseModel, as_pagination: bool = True
+) -> dict[str, Any] | Any:
     """
     We aim to convert query strings in models fields
     to be used as filters.
@@ -26,15 +24,17 @@ async def apply_filters(
     """
     query = select(model)
     # filter_dto.model_dump(exclude_none=True) gives us only what the user sent
-    filters: dict[str, Any] = filter_dto.model_dump(exclude={"page", "per_page"}, exclude_none=True)
+    filters: dict[str, Any] = filter_dto.model_dump(
+        exclude={"page", "per_page"}, exclude_none=True
+    )
 
     operators = {
         "lte": lambda col, val: col <= val,
         "gte": lambda col, val: col >= val,
-        "gt":  lambda col, val: col > val,
-        "lt":  lambda col, val: col < val,
-        "ne":  lambda col, val: col != val,
-        "eq":  lambda col, val: col == val,
+        "gt": lambda col, val: col > val,
+        "lt": lambda col, val: col < val,
+        "ne": lambda col, val: col != val,
+        "eq": lambda col, val: col == val,
     }
 
     for key, value in filters.items():
@@ -56,10 +56,10 @@ async def apply_filters(
     if as_pagination:
         start_idx = filter_dto.per_page * (filter_dto.page - 1)
         return {
-            "items": items[start_idx: start_idx + filter_dto.per_page],
+            "items": items[start_idx : start_idx + filter_dto.per_page],
             "total": total,
             "page": filter_dto.page,
             "per_page": filter_dto.per_page,
-            "pages": (total + filter_dto.per_page - 1) // filter_dto.per_page
+            "pages": (total + filter_dto.per_page - 1) // filter_dto.per_page,
         }
     return query

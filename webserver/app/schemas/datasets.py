@@ -1,14 +1,11 @@
-from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import List, Optional
 
 import requests
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from sqlalchemy import select
-
-from app.models.dataset import SUPPORTED_ENGINES, Dataset
+from app.models.dataset import SUPPORTED_ENGINES
 from app.schemas.catalogues import CatalogueCreate
 from app.schemas.dictionaries import DictionaryCreate
-from app.helpers.base_model import get_db
 
 
 class DatasetBase(BaseModel):
@@ -29,12 +26,12 @@ class DatasetCreate(DatasetBase):
     catalogue: Optional[CatalogueCreate] = None
     dictionaries: List[DictionaryCreate] = Field(default_factory=list)
 
-    @field_validator('name')
+    @field_validator("name")
     @classmethod
     def sanitize_name(cls, v: str) -> str:
         return requests.utils.unquote(v).lower()
 
-    @field_validator('type')
+    @field_validator("type")
     @classmethod
     def validate_type(cls, v: str) -> str:
         if v.lower() not in SUPPORTED_ENGINES:

@@ -295,7 +295,7 @@ class TestPostContainers(ContainersMixin):
             headers=post_json_admin_header
         )
         assert resp.status_code == 400
-        assert resp.json()["error"] == '/testimage:0.1.1 does not have a tag. Please provide one in the format <image>:<tag> or <image>@sha256..'
+        assert resp.json()["error"] == '/testimage:0.1.1 does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256..'
 
 
 class TestPatchContainers(BaseTest):
@@ -316,7 +316,7 @@ class TestPatchContainers(BaseTest):
             headers=post_json_admin_header
         )
         assert resp.status_code == 201
-        cont_db_obj: Container = await Container.get_by_id(self.db_session, container.id)
+        cont_db_obj: Container = await Container.get_by_id_or_raise(self.db_session, container.id)
         assert cont_db_obj.ml == True
 
     @mark.asyncio
@@ -383,6 +383,7 @@ class TestSync(BaseTest):
         self,
         client,
         post_json_admin_header,
+        v1_registry_mock,
         tags_request,
         registry,
         expected_image_names,
@@ -405,8 +406,8 @@ class TestSync(BaseTest):
             'acr.azurecr.io/example:1.2.3',
             'acr.azurecr.io/example:dev',
             # 'acr.azurecr.io/example:latest', This is already present and not synched
-            'acr.azurecr.io/testimage@sha256:c1e51a68c68a448a',
-            'acr.azurecr.io/example@sha256:c1e51a68c68a448a'
+            'acr.azurecr.io/testimage@sha256:caed983c5ba866aaa9a15cc31781f0c5fd9a73bee25dae2d9b35ee8fa6255a6c',
+            'acr.azurecr.io/example@sha256:caed983c5ba866aaa9a15cc31781f0c5fd9a73bee25dae2d9b35ee8fa6255a6c'
         ]
         assert resp.status_code == 201
         assert sorted(resp.json()["images"]) == sorted(expected_resp)
@@ -416,6 +417,7 @@ class TestSync(BaseTest):
         self,
         client,
         post_json_admin_header,
+        v1_registry_mock,
         cr_name,
         respx_mock,
         registry,
@@ -451,6 +453,7 @@ class TestSync(BaseTest):
         self,
         client,
         post_json_admin_header,
+        v1_registry_mock,
         registry,
         container,
         container_with_sha,
