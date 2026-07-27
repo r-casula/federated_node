@@ -15,7 +15,7 @@ dependencies = [
     "pycparser==2.22",
     "pyodbc==5.2.0",
     "cryptography>=46.0.5",
-    "setuptools>=78.1.1",
+    "setuptools>=83.0.0",
     "SQLAlchemy==2.0.40",
     "sqlglot==26.16.2",
     "sqlglotrs==0.4.0",
