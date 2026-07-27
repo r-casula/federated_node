@@ -21,7 +21,9 @@ data:
   ALPINE_IMAGE: {{ include "fn-alpine" . }}
   CLAIM_CAPACITY: {{ .Values.storage.capacity }}
   STORAGE_CLASS: {{ include "storageClassName" . }}
+  MOUNT_OPTIONS: {{ join "," .Values.storage.mountOptions | quote }}
   CRD_DOMAIN: {{ include "controllerCrdGroup" . }}
+  ENABLE_IMAGE_WHITELIST: {{ .Values.federatedNode.enable_image_whitelist | quote }}
 {{- if .Values.federatedNode.allow_delivery_api }}
   AUTO_DELIVERY_RESULTS: "true"
 {{- end }}
@@ -34,6 +36,11 @@ data:
   AZURE_STORAGE_ENABLED: "true"
   AZURE_SHARE_NAME: {{ .Values.storage.azure.shareName }}/results
   AZURE_SECRET_NAME: {{ .Values.storage.azure.secretName | default "azure-storage-secret" }}
+{{- end }}
+{{- if .Values.storage.nfs }}
+  NFS_STORAGE_ENABLED: "true"
+  NFS_SERVER: {{ .Values.storage.nfs.url }}
+  NFS_PATH: {{ .Values.storage.nfs.path }}/results
 {{- end }}
 {{- if .Values.taskReview }}
   TASK_REVIEW: enabled
