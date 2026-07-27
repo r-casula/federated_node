@@ -1,4 +1,3 @@
-import logging
 import json
 from datetime import datetime, timedelta
 from typing import Any, Literal, Self, Tuple
@@ -17,21 +16,34 @@ from uuid import uuid4
 import urllib3
 from app.helpers.const import REVIEW_STATUS
 from app.helpers.settings import settings
+import logging
+import re
+from datetime import datetime, timedelta
+from typing import Self, Tuple
+from uuid import uuid4
+
+import urllib3
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Select, String, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, joinedload, mapped_column, relationship
+from sqlalchemy.sql import func
+
 from app.helpers.base_model import BaseModel
-from app.helpers.keycloak import Keycloak
-from app.helpers.kubernetes import KubernetesBatchClient, KubernetesCRDClient, KubernetesClient
 from app.helpers.exceptions import (
-    DBError, InvalidRequest, TaskCRDExecutionException,
+    DBError, DBRecordNotFoundError, InvalidRequest, TaskCRDExecutionException,
     TaskImageException, TaskExecutionException
 )
+from app.helpers.keycloak import Keycloak
+from app.helpers.kubernetes import KubernetesBatchClient, KubernetesClient, KubernetesCRDClient
+from app.helpers.settings import settings
 from app.helpers.task_pod import TaskPod
-from app.models.dataset import Dataset
 from app.models.container import Container
+from app.models.dataset import Dataset
 from app.models.registry import Registry
 from app.helpers.container_registries import BaseRegistry
 from app.schemas.tasks import TaskRead
 
-logger = logging.getLogger('task_model')
+logger = logging.getLogger("task_model")
 logger.setLevel(logging.INFO)
 
 
@@ -42,9 +54,13 @@ class Task(BaseModel):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     docker_image: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str] = mapped_column(String(4096))
-    pod_status: Mapped[str] = mapped_column(String(256), server_default='scheduled')
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False, insert_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=True, onupdate=func.now())
+    pod_status: Mapped[str] = mapped_column(String(256), server_default="scheduled")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, insert_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=True, onupdate=func.now()
+    )
     requested_by: Mapped[str] = mapped_column(String(256), nullable=False)
     review_status: Mapped[bool] = mapped_column(Boolean, nullable=True)
 
@@ -64,14 +80,27 @@ class Task(BaseModel):
         super().__init__(**kwargs)
 
     @classmethod
-    async def get_by_id(cls, session:AsyncSession, id: int, for_api:bool=False) -> Self:
-        q = select(cls).options(joinedload(cls.dataset)).where(cls.id == id)
+    async def get_by_id(cls, session:AsyncSession, obj_id: int) -> Self|None:
+        q = select(cls).options(joinedload(cls.dataset)).where(cls.id == obj_id)
         task_query_results = await session.execute(q)
         task: Self | None = task_query_results.scalars().one_or_none()
-        if for_api:
+        return task
+
+    @classmethod
+    async def get_by_id_dict(cls, session:AsyncSession, obj_id: int) -> TaskRead | None:
+        task: Self | None = await cls.get_by_id(session, obj_id)
+        if task:
             return TaskRead.model_validate(task, from_attributes=True).model_copy(
                 update={"status": await task.update_status()}
             )
+
+    @classmethod
+    async def get_by_id_or_raise(cls, session: AsyncSession, obj_id: int) -> Self:
+        task: Self | None = await cls.get_by_id(session, obj_id)
+
+        if task is None:
+            raise DBRecordNotFoundError(f"Task with id {obj_id} does not exist")
+
         return task
 
     @classmethod
@@ -79,15 +108,17 @@ class Task(BaseModel):
         """
         Find the registry
         """
-        for i in range(len(docker_image.split('/'))):
-            registry = "/".join(docker_image.split('/')[0:i])
+        for i in range(len(docker_image.split("/"))):
+            registry = "/".join(docker_image.split("/")[0:i])
 
             q = select(func.count(Registry.id)).where(Registry.url == registry)
 
             if (await session.execute(q)).scalar_one() == 1:
-                return registry, "/".join(docker_image.split('/')[i:])
+                return registry, "/".join(docker_image.split("/")[i:])
 
-        raise InvalidRequest("Could not find the image in the mapped registries. Check the image has the full name")
+        raise InvalidRequest(
+            "Could not find the image in the mapped registries. Check the image has the full name"
+        )
 
     @classmethod
     async def get_image_with_repo(cls, session:AsyncSession, docker_image:str, string_only:bool=True) -> str | Container:
@@ -99,10 +130,10 @@ class Task(BaseModel):
 
         tag = None
         sha = None
-        if '@' in image:
-            image_name, sha = image.split('@')
+        if "@" in image:
+            image_name, sha = image.split("@")
         else:
-            image_name, tag = image.split(':')
+            image_name, tag = image.split(":")
 
         q: Select[Tuple[Container]] = select(Container).options(
             joinedload(Container.registry)
@@ -132,7 +163,7 @@ class Task(BaseModel):
         """
         return f"{self.name.lower().replace(' ', '-')}-{uuid4()}"
 
-    def get_expiration_date(self, as_dt:bool=False) -> str|datetime:
+    def get_expiration_date(self, as_dt: bool = False) -> str | datetime:
         """
         In order to help with the cleanup process we set a lable for
         - pod
@@ -151,11 +182,62 @@ class Task(BaseModel):
         return exp_date.strftime("%Y%m%d")
 
     def needs_crd(self):
+        """
+        Wrapper for few feature flag to know if we need to handle CRDs
+        """
         return (
-            (not self.is_from_controller) and \
-                settings.task_controller is not None \
-                    and settings.auto_delivery_results is not None
+            (not self.is_from_controller)
+            and settings.task_controller is not None
+            and settings.auto_delivery_results is not None
+        )
+
+    async def create_controller_crd(self):
+        """
+        In case this is a task triggered by users
+        directly through the API, create a CRD
+        so that the task controller can deliver resutls automatically
+        Some info like the idp and source is not actively used
+        by the controller at this stage, so we populate them
+        with default values.
+
+        If the settings.task_controller env variable is not set, do nothing
+        """
+        if not settings.task_controller:
+            return
+
+        crd_client: KubernetesCRDClient = await KubernetesCRDClient.create()
+        try:
+            await crd_client.api_client.create_cluster_custom_object(
+                settings.crd_domain, 'v1', 'analytics',
+                {
+                    "apiVersion": f"{settings.crd_domain}/v1",
+                    "kind": "Analytics",
+                    "metadata": {
+                        "annotations": {
+                            f"{settings.crd_domain}/user": "ok",
+                            f"{settings.crd_domain}/task_id": str(self.id),
+                            f"{settings.crd_domain}/done": "true",
+                        },
+                        "name": f"fn-task-{self.id}",
+                    },
+                    "spec": {
+                        "dataset": {"name": self.dataset.name},
+                        "image": self.docker_image,
+                        "project": "federated_node",
+                        "source": {
+                            "repository": self.dataset.repository
+                            or "Aridhia-Open-Source/PHEMS_federated_node"
+                        },
+                        "user": {
+                            "idpId": "",
+                            "username": Keycloak().get_user_by_id(self.requested_by)["username"],
+                        },
+                    },
+                },
             )
+        except ApiException as apie:
+            if apie.status != 409:
+                raise TaskCRDExecutionException(apie.body, apie.status) from apie
 
     async def run(self, validate=False) -> None:
         """
@@ -169,7 +251,7 @@ class Task(BaseModel):
 
         command = None
         if len(self.executors):
-            command= self.executors[0].get("command", '')
+            command = self.executors[0].get("command", "")
 
         body: V1Pod = await TaskPod(**{
             "name": self.pod_name(),
@@ -229,7 +311,8 @@ class Task(BaseModel):
                 if self.docker_image in images and not statuses:
                     return pod
         except IndexError:
-            return
+            pass
+        return None
 
     async def update_status(self):
         """
@@ -242,7 +325,7 @@ class Task(BaseModel):
         """
         status = self.pod_status
         if self.get_expiration_date(as_dt=True) < datetime.now():
-            self.pod_status = 'deleted'
+            self.pod_status = "deleted"
             return self.pod_status
 
         try:
@@ -252,7 +335,7 @@ class Task(BaseModel):
 
             status_obj = status_obj[0].state
 
-            for status in ['running', 'waiting', 'terminated']:
+            for status in ["running", "waiting", "terminated"]:
                 st = getattr(status_obj, status)
                 if st is not None:
                     break
@@ -267,9 +350,7 @@ class Task(BaseModel):
                     "reason": getattr(st, "reason", None)
                 })
             self.pod_status = status
-            return {
-                status: returned_status
-            }
+            return {status: returned_status}
         except AttributeError:
             self.pod_status = status if status != 'running' else 'deleted'
 
@@ -287,7 +368,7 @@ class Task(BaseModel):
             has_error = True
 
         try:
-            self.pod_status = 'cancelled'
+            self.pod_status = "cancelled"
         except Exception as exc:
             raise DBError("An error occurred while updating") from exc
 
@@ -333,7 +414,7 @@ class Task(BaseModel):
                 pod_name=job_pod.metadata.name,
                 source_path=settings.task_pod_results_path,
                 dest_path=f"{settings.results_path}/{self.id}/results",
-                out_name=f"{settings.public_url}-results-{self.id}"
+                out_name=f"{settings.public_url}-results-{self.id}",
             )
             await v1.delete_pod(job_pod.metadata.name)
             await v1_batch.delete_job(job_name)
@@ -345,54 +426,6 @@ class Task(BaseModel):
         except urllib3.exceptions.MaxRetryError as mre:
             raise InvalidRequest("The cluster could not create the job") from mre
         return res_file
-
-    async def create_controller_crd(self):
-        """
-        In case this is a task triggered by users
-        directly through the API, create a CRD
-        so that the task controller can deliver resutls automatically
-        Some info like the idp and source is not actively used
-        by the controller at this stage, so we populate them
-        with default values.
-
-        If the settings.task_controller env variable is not set, do nothing
-        """
-        if not settings.task_controller:
-            return
-
-        crd_client: KubernetesCRDClient = await KubernetesCRDClient.create()
-        try:
-            await crd_client.api_client.create_cluster_custom_object(
-                settings.crd_domain, 'v1', 'analytics',
-                {
-                    "apiVersion": f"{settings.crd_domain}/v1",
-                    "kind": "Analytics",
-                    "metadata": {
-                        "annotations": {
-                            f"{settings.crd_domain}/user": 'ok',
-                            f"{settings.crd_domain}/task_id": str(self.id),
-                            f"{settings.crd_domain}/done": 'true'
-                        },
-                        "name": f"fn-task-{self.id}"
-                    },
-                    "spec": {
-                        "dataset": {"name": self.dataset.name},
-                        "image": self.docker_image,
-                        "project": "federated_node",
-                        "source": {
-                            "repository": self.dataset.repository or "Aridhia-Open-Source/PHEMS_federated_node"
-                        },
-                        "user": {
-                            "idpId": "",
-                            "username": Keycloak().get_user_by_id(self.requested_by)["username"]
-                        }
-                    }
-                }
-            )
-        except ApiException as apie:
-            if apie.status != 409:
-                raise TaskCRDExecutionException(apie.body, apie.status) from apie
-            pass
 
     def get_review_status(self) -> str:
         """
@@ -415,6 +448,7 @@ class Task(BaseModel):
         for crd in crds["items"]:
             if crd["metadata"]["annotations"].get(f"{settings.crd_domain}/task_id") == str(self.id):
                 return crd["metadata"]["name"]
+        return None
 
     async def get_task_crd(self) -> dict|None:
         """
@@ -460,7 +494,7 @@ class Task(BaseModel):
         Retrieve the pod's logs
         """
         await self.update_status()
-        if 'waiting' in self.status:
+        if 'waiting' in self.pod_status:
             return "Task queued"
 
         pod: V1Pod | None = await self.get_current_pod(is_running=False)

@@ -4,29 +4,27 @@ user-related endpoints:
 - POST /users
 - PUT /users/reset-password
 """
+
 from http import HTTPStatus
-from fastapi import APIRouter, Depends, Request
 from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
+from fastapi import APIRouter, Depends, Request
+
+from app.helpers.base_model import get_db
 from app.helpers.exceptions import InvalidRequest
 from app.helpers.keycloak import Keycloak
+from app.helpers.settings import kc_settings, settings
 from app.helpers.wrappers import Auth, audit
 from app.schemas.users import ResetPassword, UserPost
-from app.helpers.base_model import get_db
-from app.helpers.keycloak import Keycloak
-from app.helpers.settings import settings, kc_settings
-
 
 router = APIRouter(tags=["users"], prefix="/users")
 
 
-@router.post('', status_code=HTTPStatus.CREATED, dependencies=[Depends(Auth("can_do_admin"))])
+@router.post("", status_code=HTTPStatus.CREATED, dependencies=[Depends(Auth("can_do_admin"))])
 @audit
 async def create_user(
-    request: Request,
-    body: UserPost,
-    session: DBSession = Depends(get_db)
+    request: Request, body: UserPost, session: DBSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     POST /users endpoint. Creates a KC user, and sets a temp
@@ -45,18 +43,14 @@ async def create_user(
         "email": body.email,
         "username": user_info["username"],
         "tempPassword": user_info["password"],
-        "info": "The user should change the temp password at " \
-            f"https://{settings.public_url}/users/reset-password"
+        "info": "The user should change the temp password at "
+        f"https://{settings.public_url}/users/reset-password",
     }
 
-@router.put(
-    '/reset-password',
-    status_code=HTTPStatus.NO_CONTENT
-)
+
+@router.put("/reset-password", status_code=HTTPStatus.NO_CONTENT)
 async def reset_password(
-    request: Request,
-    body: ResetPassword,
-    session: DBSession = Depends(get_db)
+    request: Request, body: ResetPassword, session: DBSession = Depends(get_db)
 ) -> None:
     """
     POST /users/reset-password endpoint. Interface to keycloak
@@ -66,21 +60,17 @@ async def reset_password(
     kc = Keycloak()
     user = kc.get_user_by_email(email=body.email)
     kc.reset_user_pass(
-        user_id=user["id"], username=user["username"],
+        user_id=user["id"],
+        username=user["username"],
         old_pass=body.temp_password,
-        new_pass=body.new_password
+        new_pass=body.new_password,
     )
 
 
-@router.get(
-    '',
-    status_code=HTTPStatus.OK,
-    dependencies=[Depends(Auth("can_do_admin"))]
-)
+@router.get("", status_code=HTTPStatus.OK, dependencies=[Depends(Auth("can_do_admin"))])
 @audit
 async def get_users_list(
-    request: Request,
-    session: DBSession = Depends(get_db)
+    request: Request, session: DBSession = Depends(get_db)
 ) -> list[dict[str, Any]]:
     """
     GET /users/ endpoint. This is a simplified version
@@ -88,14 +78,17 @@ async def get_users_list(
     """
     kc = Keycloak()
     ls_users = kc.list_users()
-    normalised_list = [{
+    normalised_list = [
+        {
             "username": user["username"],
             "email": user["email"],
-            "firstName": user.get("firstName", ''),
-            "lastName": user.get("lastName", ''),
+            "firstName": user.get("firstName", ""),
+            "lastName": user.get("lastName", ""),
             "role": kc.get_user_role(user["id"]),
-            "needs_to_reset_password": user.get("requiredActions", []) != []
-        } for user in ls_users if user["username"] != kc_settings.keycloak_admin
+            "needs_to_reset_password": user.get("requiredActions", []) != [],
+        }
+        for user in ls_users
+        if user["username"] != kc_settings.keycloak_admin
     ]
 
     return normalised_list

@@ -117,6 +117,16 @@ def event_loop():
     yield loop
     loop.close()
 
+from alembic import command
+from alembic.config import Config
+
+@fixture(scope="session", autouse=True)
+def setup_schema():
+    cfg = Config("alembic.ini")
+    command.upgrade(cfg, "head")
+    yield
+    command.downgrade(cfg, "base")
+
 @fixture(scope="function")
 async def db_session():
     """The expectation with async_sessions is that the
@@ -161,14 +171,18 @@ async def client(db_session):
     app.dependency_overrides.clear()
 
 @fixture
-def db_secret_mock(dataset: Dataset):
+def db_secret_mock(dataset: Dataset, dockerconfigjson_mock):
     secret_return = Mock(spec=V1Secret)
     secret_return.metadata.name = dataset.get_creds_secret_name()
+    # Carries both the dataset-credentials keys and the registry
+    # `.dockerconfigjson` key so a single mocked `read_namespaced_secret`
+    # serves both dataset-cred and registry-cred reads.
     secret_return.data = {
         "PGUSER": "YWJjMTIz",
         "PGPASSWORD": "YWJjMTIz",
         "USER": "YWJjMTIz",
-        "TOKEN": "YWJjMTIz"
+        "TOKEN": "YWJjMTIz",
+        **dockerconfigjson_mock,
     }
     return secret_return
 

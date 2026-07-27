@@ -59,6 +59,7 @@ class TestGetTasks(BaseTest):
             simple_admin_header,
             client,
             registry_client,
+            v1_registry_mock,
             v1_task_mock,
             task_body
         ):
@@ -97,7 +98,7 @@ class TestGetTasks(BaseTest):
         decode_return.update(basic_user)
         mock_kc_client["tasks_api_kc"].return_value.decode_token.return_value = decode_return
 
-        t = await Task.get_by_id(self.db_session, task.id)
+        t: Task = await Task.get_by_id_or_raise(self.db_session, task.id)
         t.requested_by = basic_user["id"]
         resp = await client.get(
             f'/tasks/{task.id}',
@@ -248,27 +249,6 @@ class TestPostTask(BaseTest):
         assert [pod.name for pod in pod_body.spec.init_containers] == [f"init-{response.json()["id"]}", "fetch-data"]
 
     @mark.asyncio
-    async def test_create_task_no_tag_fails(
-            self,
-            post_json_admin_header,
-            client,
-            task_body,
-            container
-        ):
-        """
-        Tests task creation returns an error when the image does not have a tag or sha
-        """
-        tagless_image = "".join(container.full_image_name().split(':')[:-1])
-        task_body["executors"][0]["image"] = tagless_image
-        response = client.post(
-            '/tasks/',
-            json=task_body,
-            headers=post_json_admin_header
-        )
-        assert response.status_code == 400
-        assert response.json["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
-
-    @mark.asyncio
     async def test_create_task_no_name_fails(
             self,
             post_json_admin_header,
@@ -311,7 +291,7 @@ class TestPostTask(BaseTest):
             headers=post_json_admin_header
         )
         assert response.status_code == 400
-        assert response.json()["error"] == f"{tagless_image} does not have a tag. Please provide one in the format <image>:<tag> or <image>@sha256.."
+        assert response.json()["error"] == f"{tagless_image} does not have a tag or is malformed. Please provide one in the format <registry>/<image>:<tag> or <registry>/<image>@sha256.."
 
     @mark.asyncio
     async def test_create_task_space_name_fails(

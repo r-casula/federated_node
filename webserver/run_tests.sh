@@ -2,6 +2,7 @@
 
 echo "Setting up docker-compose env vars"
 export PGHOST=db
+export KEYCLOAK_SECRET=testsecret
 
 is_ci=$1
 

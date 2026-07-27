@@ -1,6 +1,7 @@
-from typing import Optional
-from pydantic import BaseModel, ConfigDict
 from datetime import datetime as dt
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict
 
 
 class AuditBase(BaseModel):
@@ -9,9 +10,9 @@ class AuditBase(BaseModel):
     http_method: str
     endpoint: str
     requested_by: str
-    status_code: int|None
-    api_function: str|None
-    details: str|None
+    status_code: int | None
+    api_function: str | None
+    details: str | None
     event_time: dt
 
     model_config = ConfigDict(from_attributes=True)

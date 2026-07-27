@@ -1,12 +1,12 @@
 import logging
 import re
-from typing import TYPE_CHECKING, List, NoReturn, Self
+from typing import TYPE_CHECKING, List, Self
 from sqlalchemy import Integer, String, select
-from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.helpers.base_model import BaseModel
-from app.helpers.connection_string import Mssql, Postgres, Mysql, Oracle, MariaDB
+from app.helpers.connection_string import MariaDB, Mssql, Mysql, Oracle, Postgres
 from app.helpers.exceptions import DBRecordNotFoundError, InvalidRequest
 from app.helpers.kubernetes import KubernetesClient
 from kubernetes_asyncio.client import ApiException, V1Secret
@@ -24,12 +24,12 @@ SUPPORTED_ENGINES = {
     "postgres": Postgres,
     "mysql": Mysql,
     "oracle": Oracle,
-    "mariadb": MariaDB
+    "mariadb": MariaDB,
 }
 
 
-class Dataset(BaseModel):
-    __tablename__ = 'datasets'
+class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
+    __tablename__ = "datasets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(256), unique=True, nullable=False)
@@ -41,18 +41,15 @@ class Dataset(BaseModel):
     extra_connection_args: Mapped[str] = mapped_column(String(4096), nullable=True)
     repository: Mapped[str] = mapped_column(String(4096), nullable=True)
 
-    catalogue:Mapped["Catalogue"] = relationship(
+    catalogue: Mapped["Catalogue"] = relationship(
         "Catalogue",
         back_populates="dataset",
         uselist=False,
         cascade="all, delete-orphan",
-        lazy='selectin'
+        lazy="selectin",
     )
     dictionaries: Mapped[List["Dictionary"]] = relationship(
-        "Dictionary",
-        back_populates="dataset",
-        cascade="all, delete-orphan",
-        lazy='selectin'
+        "Dictionary", back_populates="dataset", cascade="all, delete-orphan", lazy="selectin"
     )
 
     def __init__(self, **kwargs):
@@ -60,7 +57,7 @@ class Dataset(BaseModel):
         self.password = kwargs.pop("password", None)
         super().__init__(**kwargs)
 
-    async def delete(self, session: AsyncSession) -> NoReturn:
+    async def delete(self, session: AsyncSession, _commit: bool = True) -> None:
         async with session.begin_nested() as nested:
             await super().delete(session, False)
             v1: KubernetesClient = await KubernetesClient.create()
@@ -74,17 +71,20 @@ class Dataset(BaseModel):
 
     @property
     def slug(self):
-        return re.sub(r'[\W_]+', '-', self.name)
+        """Slugify the name for url purposes"""
+        return re.sub(r"[\W_]+", "-", self.name)
 
     @property
     def url(self) -> str:
+        """Compose the url to direct access to the DS details"""
         return f"https://{settings.public_url}/datasets/{self.slug}"
 
     def get_creds_secret_name(self, host=None, name=None):
+        """Templates the secret name"""
         host = host or self.host
         name = name or self.name
 
-        cleaned_up_host = re.sub('http(s)*://', '', host)
+        cleaned_up_host = re.sub("http(s)*://", "", host)
         return f"{cleaned_up_host}-{re.sub('\\s|_|#', '-', name.lower())}-creds"
 
     async def get_connection_string(self):
@@ -98,7 +98,7 @@ class Dataset(BaseModel):
             host=self.host,
             port=self.port,
             database=self.name,
-            args=self.extra_connection_args
+            args=self.extra_connection_args,
         ).connection_str
 
     async def get_credentials(self) -> tuple:
@@ -112,14 +112,18 @@ class Dataset(BaseModel):
         )
         # Doesn't matter which key it's being picked up, the value it's the same
         # in terms of *USER or *PASSWORD
-        user = KubernetesClient.decode_secret_value(secret.data['PGUSER'])
-        password = KubernetesClient.decode_secret_value(secret.data['PGPASSWORD'])
+        user = KubernetesClient.decode_secret_value(secret.data["PGUSER"])
+        password = KubernetesClient.decode_secret_value(secret.data["PGPASSWORD"])
 
         return user, password
 
     @classmethod
     async def get_dataset_by_name_or_id(
-        cls, session: AsyncSession, id:int=None, name:str="", raise_if_not_found:bool = True
+        cls,
+        session: AsyncSession,
+        obj_id: int = None,
+        name: str = "",
+        raise_if_not_found: bool = True,
     ) -> Self:
         """
         Common function to get a dataset by name or id.
@@ -132,13 +136,13 @@ class Dataset(BaseModel):
         Raises:
             DBRecordNotFoundError: if no record is found
         """
-        if id and name:
-            error_msg = f"Dataset \"{name}\" with id {id} does not exist"
-            q = select(cls).where((cls.name.ilike(name or "") & (cls.id == id)))
+        if obj_id and name:
+            error_msg = f'Dataset "{name}" with id {obj_id} does not exist'
+            q = select(cls).where((cls.name.ilike(name or "") & (cls.id == obj_id)))
 
         else:
-            error_msg = f"Dataset {name if name else id} does not exist"
-            q = select(cls).where((cls.name.ilike(name or "") | (Dataset.id == id)))
+            error_msg = f"Dataset {name if name else obj_id} does not exist"
+            q = select(cls).where((cls.name.ilike(name or "") | (Dataset.id == obj_id)))
 
         q_res = await session.execute(q)
         dataset: Self | None = q_res.scalars().one_or_none()
@@ -149,4 +153,4 @@ class Dataset(BaseModel):
         return dataset
 
     def __repr__(self):
-        return f'<Dataset {self.name}>'
+        return f"<Dataset {self.name}>"
