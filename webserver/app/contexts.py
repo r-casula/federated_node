@@ -1,8 +1,7 @@
 import contextvars
 
-from app.main import app
 from app.helpers.kubernetes_manager import KubernetesBase, get_k8s_base
-
+from app.main import app
 
 request_k8s_client = contextvars.ContextVar("k8s_client")
 

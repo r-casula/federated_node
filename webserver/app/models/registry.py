@@ -1,11 +1,11 @@
 import json
 import logging
 import re
-from typing import TYPE_CHECKING, List, NoReturn
+from typing import TYPE_CHECKING, List
 
 from kubernetes_asyncio.client.exceptions import ApiException
 from kubernetes_asyncio.client.models.v1_secret import V1Secret
-from sqlalchemy import Integer, String, Boolean
+from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
@@ -54,7 +54,7 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
         is created.
         """
         v1: KubernetesClient = await KubernetesClient.create()
-        secret_name:str = self.slugify_name()
+        secret_name: str = self.slugify_name()
         dockerjson = {}
 
         key = self.url
@@ -62,7 +62,9 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
             key = "https://index.docker.io/v1/"
 
         try:
-            secret: V1Secret = await v1.api_client.read_namespaced_secret(secret_name, settings.task_namespace)
+            secret: V1Secret = await v1.api_client.read_namespaced_secret(
+                secret_name, settings.task_namespace
+            )
         except ApiException as apie:
             if apie.status == 404:
                 await v1.create_secret(
@@ -71,7 +73,9 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
                     namespaces=[settings.task_namespace],
                     type="kubernetes.io/dockerconfigjson",
                 )
-                secret = await v1.api_client.read_namespaced_secret(secret_name, settings.task_namespace)
+                secret = await v1.api_client.read_namespaced_secret(
+                    secret_name, settings.task_namespace
+                )
             else:
                 raise InvalidRequest(
                     "Something went wrong when creating registry secrets"
@@ -86,8 +90,10 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
                 "auth": v1.encode_secret_value(f"{self.username}:{self.password}"),
             }
         }
-        secret.data['.dockerconfigjson'] = v1.encode_secret_value(json.dumps(dockerjson))
-        await v1.api_client.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret)
+        secret.data[".dockerconfigjson"] = v1.encode_secret_value(json.dumps(dockerjson))
+        await v1.api_client.patch_namespaced_secret(
+            namespace=settings.task_namespace, name=secret_name, body=secret
+        )
 
     async def _get_creds(self):
         """Private method to return a dict of credentials"""
@@ -99,14 +105,14 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
 
         v1: KubernetesClient = await KubernetesClient.create()
         regcred: V1Secret = await v1.api_client.read_namespaced_secret(
-            self.slugify_name(), settings.task_namespace, pretty='pretty'
+            self.slugify_name(), settings.task_namespace, pretty="pretty"
         )
 
-        dockerjson = json.loads(v1.decode_secret_value(regcred.data['.dockerconfigjson']))
+        dockerjson = json.loads(v1.decode_secret_value(regcred.data[".dockerconfigjson"]))
         key = list(dockerjson["auths"].keys())[0]
         return {
-            "user": dockerjson['auths'][key]["username"],
-            "token": dockerjson['auths'][key]["password"]
+            "user": dockerjson["auths"][key]["username"],
+            "token": dockerjson["auths"][key]["password"],
         }
 
     def slugify_name(self) -> str:
@@ -122,11 +128,8 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
         image tag parsers. Based on the registry name
         infers the appropriate class
         """
-        args = {
-            "registry": self._get_name(),
-            "creds": await self._get_creds()
-        }
-        matches = re.search(r'azurecr\.io|ghcr\.io', self.url)
+        args = {"registry": self._get_name(), "creds": await self._get_creds()}
+        matches = re.search(r"azurecr\.io|ghcr\.io", self.url)
 
         matches = "" if matches is None else matches.group()
 
@@ -151,7 +154,9 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
             await super().delete(session, False)
             v1: KubernetesClient = await KubernetesClient.create()
             try:
-                await v1.api_client.delete_namespaced_secret(namespace=settings.task_namespace, name=self.slugify_name())
+                await v1.api_client.delete_namespaced_secret(
+                    namespace=settings.task_namespace, name=self.slugify_name()
+                )
             except ApiException as apie:
                 await nested.rollback()
                 logger.error("%s:\n\tDetails: %s", apie.reason, apie.body)

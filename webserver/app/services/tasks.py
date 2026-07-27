@@ -15,7 +15,9 @@ from app.schemas.tasks import TaskCreate
 
 class TaskService:
     @staticmethod
-    async def add(session: AsyncSession, request:Request, data: TaskCreate, dry_run:bool = False) -> Task:
+    async def add(
+        session: AsyncSession, request: Request, data: TaskCreate, dry_run: bool = False
+    ) -> Task:
         kc_client = Keycloak()
         user_token = Keycloak.get_token_from_headers()
         decoded_token = kc_client.decode_token(user_token)

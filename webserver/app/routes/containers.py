@@ -12,8 +12,8 @@ from http import HTTPStatus
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from app.helpers.base_model import get_db
@@ -42,7 +42,7 @@ router = APIRouter(tags=["containers"], prefix="/containers")
 async def get_all_containers(
     request: Request,
     params: Annotated[ContainerFilters, Query()],
-    session: AsyncSession = Depends(get_db)
+    session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """
     GET /containers endpoint.

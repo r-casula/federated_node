@@ -1,4 +1,3 @@
-import json
 import logging
 from base64 import b64encode
 from typing import List
@@ -7,8 +6,6 @@ import requests
 from requests.exceptions import ConnectionError
 
 from app.helpers.exceptions import ContainerRegistryException
-from app.helpers.kubernetes import KubernetesClient
-from app.helpers.settings import settings
 
 logger = logging.getLogger("registries_handler")
 logger.setLevel(logging.INFO)
@@ -188,7 +185,7 @@ class DockerRegistry(BaseRegistry):
     list_repo_url = "https://hub.docker.com/v2/repositories/%(organization)s"
     token_field = "token"
 
-    def __init__(self, registry: str,  creds: dict = {}):
+    def __init__(self, registry: str, creds: dict = {}):
         super().__init__(registry, creds)
 
         self.organization = registry
@@ -236,12 +233,12 @@ class GitHubRegistry(BaseRegistry):
         super().__init__(registry, creds)
 
         self.request_args["headers"] = {}
-        self.organization = registry.split('/')[1]
+        self.organization = registry.split("/")[1]
         self._token = self.login()
 
     def login(self, image: str = None) -> str:
         logging.info("Auth on github skipped, an organization name is needed")
-        return self.creds['token']
+        return self.creds["token"]
 
     async def get_image_tags(self, image: str) -> dict[str, str | List[str]]:
         """

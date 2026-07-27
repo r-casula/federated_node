@@ -1,11 +1,12 @@
 import logging
-from sqlalchemy import  Integer, DateTime, String, ForeignKey, select
-from sqlalchemy.orm import Mapped, MappedColumn, relationship, mapped_column
-from sqlalchemy.sql import func
-from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 from datetime import datetime as dt
 from typing import Self
+
+from sqlalchemy import DateTime, ForeignKey, Integer, String, select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
+from sqlalchemy.sql import func
 
 from app.helpers.base_model import BaseModel
 from app.helpers.exceptions import DBError, LogAndException
@@ -99,7 +100,8 @@ class RequestModel(BaseModel):  # pylint: disable=missing-class-docstring
                 kc_client.create_policy(
                     {
                         "name": f"{ds.id} - {ds.name} Admin Policy",
-                        "description": f"List of users allowed to administrate the {ds.name} dataset",
+                        "description": "List of users allowed to administrate "
+                        f"the {ds.name} dataset",
                         "logic": "POSITIVE",
                         "roles": [{"id": admin_global_policy["id"], "required": False}],
                     },

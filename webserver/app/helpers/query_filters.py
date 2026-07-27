@@ -8,11 +8,8 @@ from app.helpers.base_model import BaseModel as DBBaseModel
 
 
 async def apply_filters(
-        db: AsyncSession,
-        model: DBBaseModel,
-        filter_dto: BaseModel,
-        as_pagination:bool = True
-    )-> dict[str, Any] | Any:
+    db: AsyncSession, model: DBBaseModel, filter_dto: BaseModel, as_pagination: bool = True
+) -> dict[str, Any] | Any:
     """
     We aim to convert query strings in models fields
     to be used as filters.

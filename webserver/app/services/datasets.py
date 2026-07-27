@@ -1,26 +1,28 @@
 from typing import List
+
 from fastapi import Request
 from kubernetes_asyncio.client import V1Secret
 from kubernetes_asyncio.client.exceptions import ApiException
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.helpers.settings import settings
-from app.helpers.kubernetes import KubernetesClient
-from app.models.dataset import Dataset
-from app.schemas.datasets import DatasetCreate, DatasetUpdate
+from app.helpers.exceptions import InvalidRequest, KubernetesException, LogAndException
 from app.helpers.keycloak import Keycloak
+from app.helpers.kubernetes import KubernetesClient
+from app.helpers.settings import settings
 from app.models.catalogue import Catalogue
+from app.models.dataset import Dataset
 from app.models.dictionary import Dictionary
-from app.helpers.exceptions import InvalidRequest, KubernetesException, LogAndException, DBError
+from app.schemas.datasets import DatasetCreate
 
 
 class DatasetService:
     @staticmethod
-    async def add(session: AsyncSession, request:Request, data: DatasetCreate) -> Dataset:
-        if await Dataset.get_dataset_by_name_or_id(session=session, name=data.name, raise_if_not_found=False):
+    async def add(session: AsyncSession, request: Request, data: DatasetCreate) -> Dataset:
+        if await Dataset.get_dataset_by_name_or_id(
+            session=session, name=data.name, raise_if_not_found=False
+        ):
             raise InvalidRequest("Dataset already exist with that name")
 
         if data.repository:
@@ -76,7 +78,8 @@ class DatasetService:
             policy = kc_client.create_policy(
                 {
                     "name": f"{dataset.id} - {dataset.name} Admin Policy",
-                    "description": f"List of users allowed to administrate the {data.name} dataset",
+                    "description": "List of users allowed to administrate the "
+                    f"{data.name} dataset",
                     "logic": "POSITIVE",
                     "users": [user_id],
                 },
@@ -164,8 +167,12 @@ class DatasetService:
                         ds.dictionaries.append(Dictionary(**d))
 
         # Get existing secret
-        secret: V1Secret = await v1.api_client.read_namespaced_secret(secret_name, settings.default_namespace, pretty='pretty')
-        secret_task: V1Secret = await v1.api_client.read_namespaced_secret(secret_name, settings.task_namespace, pretty='pretty')
+        secret: V1Secret = await v1.api_client.read_namespaced_secret(
+            secret_name, settings.default_namespace, pretty="pretty"
+        )
+        secret_task: V1Secret = await v1.api_client.read_namespaced_secret(
+            secret_name, settings.task_namespace, pretty="pretty"
+        )
 
         # Update secret if credentials are provided
         new_username = data.pop("username", None)
@@ -185,13 +192,25 @@ class DatasetService:
                 secret.metadata.name = ds.get_creds_secret_name(new_host, new_name)
                 secret_task.metadata = secret.metadata
                 secret.metadata.resource_version = None
-                await v1.api_client.create_namespaced_secret(settings.default_namespace, body=secret, pretty='true')
-                await v1.api_client.create_namespaced_secret(settings.task_namespace, body=secret_task, pretty='true')
-                await v1.api_client.delete_namespaced_secret(namespace=settings.default_namespace, name=secret_name)
-                await v1.api_client.delete_namespaced_secret(namespace=settings.task_namespace, name=secret_name)
+                await v1.api_client.create_namespaced_secret(
+                    settings.default_namespace, body=secret, pretty="true"
+                )
+                await v1.api_client.create_namespaced_secret(
+                    settings.task_namespace, body=secret_task, pretty="true"
+                )
+                await v1.api_client.delete_namespaced_secret(
+                    namespace=settings.default_namespace, name=secret_name
+                )
+                await v1.api_client.delete_namespaced_secret(
+                    namespace=settings.task_namespace, name=secret_name
+                )
             else:
-                await v1.api_client.patch_namespaced_secret(namespace=settings.task_namespace, name=secret_name, body=secret_task)
-                await v1.api_client.patch_namespaced_secret(namespace=settings.default_namespace, name=secret_name, body=secret)
+                await v1.api_client.patch_namespaced_secret(
+                    namespace=settings.task_namespace, name=secret_name, body=secret_task
+                )
+                await v1.api_client.patch_namespaced_secret(
+                    namespace=settings.default_namespace, name=secret_name, body=secret
+                )
         except ApiException as e:
             # Host and name are unique so there shouldn't be duplicates. If so
             # let the exception to be re-raised with the internal one

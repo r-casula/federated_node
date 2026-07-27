@@ -61,9 +61,7 @@ async def get_service_info(request: Request) -> dict[str, str]:
 @router.get("", dependencies=[Depends(Auth("can_admin_task"))])
 @audit
 async def get_tasks(
-    request: Request,
-    params: Annotated[TaskFilters, Query()],
-    session: DBSession = Depends(get_db)
+    request: Request, params: Annotated[TaskFilters, Query()], session: DBSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     GET /tasks endpoint. Gets the list of tasks
@@ -84,9 +82,11 @@ async def get_task_id(
 
     await does_user_own_task(request, task)
 
-    return TaskRead.model_validate(task).model_copy(
-        update={"status": await task.update_status()}
-    ).model_dump()
+    return (
+        TaskRead.model_validate(task)
+        .model_copy(update={"status": await task.update_status()})
+        .model_dump()
+    )
 
 
 @router.post("/{task_id}/cancel", dependencies=[Depends(Auth("can_admin_task"))])
@@ -103,9 +103,9 @@ async def cancel_tasks(
 
     # Should remove pod/stop ML pipeline
     await task.terminate_pod(session)
-    return TaskRead.model_validate(task).model_copy(
-        update={"status": task.pod_status}
-    ).model_dump()
+    return (
+        TaskRead.model_validate(task).model_copy(update={"status": task.pod_status}).model_dump()
+    )
 
 
 @router.post(

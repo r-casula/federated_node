@@ -39,6 +39,11 @@ dependencies = [
     "pydantic-settings>=2.13.1"
 ]
 
+[tool.isort]
+# Match Black's import formatting so `isort` and `black` don't fight each other.
+profile = "black"
+line_length = 99
+
 [project.optional-dependencies]
 dev = [
     "pylint>=3.0.3",

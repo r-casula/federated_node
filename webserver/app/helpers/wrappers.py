@@ -24,13 +24,14 @@ class Auth:
         self.scope = scope
         self.check_dataset = check_dataset
 
-    async def __call__(self,
-                       dataset_id: int|None = None,
-                       dataset_name: str|None = None,
-                       session: AsyncSession = Depends(get_db),
-                       Authorization: Annotated[str | None, Header()] = None,
-                       project_name: Annotated[str | None, Header()] = None
-            ) -> dict:
+    async def __call__(
+        self,
+        dataset_id: int | None = None,
+        dataset_name: str | None = None,
+        session: AsyncSession = Depends(get_db),
+        Authorization: Annotated[str | None, Header()] = None,
+        project_name: Annotated[str | None, Header()] = None,
+    ) -> dict:
         if not Authorization:
             raise AuthenticationError()
 

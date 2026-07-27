@@ -7,9 +7,9 @@ user-related endpoints:
 
 from http import HTTPStatus
 from typing import Any
-from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from app.helpers.base_model import get_db
 from app.helpers.exceptions import InvalidRequest

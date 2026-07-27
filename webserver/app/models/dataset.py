@@ -1,6 +1,8 @@
 import logging
 import re
 from typing import TYPE_CHECKING, List, Self
+
+from kubernetes_asyncio.client import ApiException, V1Secret
 from sqlalchemy import Integer, String, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -9,7 +11,6 @@ from app.helpers.base_model import BaseModel
 from app.helpers.connection_string import MariaDB, Mssql, Mysql, Oracle, Postgres
 from app.helpers.exceptions import DBRecordNotFoundError, InvalidRequest
 from app.helpers.kubernetes import KubernetesClient
-from kubernetes_asyncio.client import ApiException, V1Secret
 from app.helpers.settings import settings
 
 if TYPE_CHECKING:
@@ -62,7 +63,9 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
             await super().delete(session, False)
             v1: KubernetesClient = await KubernetesClient.create()
             try:
-                await v1.api_client.delete_namespaced_secret(self.get_creds_secret_name(), settings.default_namespace)
+                await v1.api_client.delete_namespaced_secret(
+                    self.get_creds_secret_name(), settings.default_namespace
+                )
             except ApiException as apie:
                 if apie.status != 404:
                     await nested.rollback()
@@ -107,8 +110,8 @@ class Dataset(BaseModel):  # pylint: disable=missing-class-docstring
         This is not involved in the Task Execution Service
         """
         v1: KubernetesClient = await KubernetesClient.create()
-        secret:V1Secret = await v1.api_client.read_namespaced_secret(
-            self.get_creds_secret_name(), settings.default_namespace, pretty='pretty'
+        secret: V1Secret = await v1.api_client.read_namespaced_secret(
+            self.get_creds_secret_name(), settings.default_namespace, pretty="pretty"
         )
         # Doesn't matter which key it's being picked up, the value it's the same
         # in terms of *USER or *PASSWORD

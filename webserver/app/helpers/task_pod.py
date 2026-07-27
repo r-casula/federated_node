@@ -1,9 +1,6 @@
 import os
+
 from kubernetes_asyncio.client import (
-    V1Pod, V1PersistentVolumeClaimVolumeSource,
-    V1VolumeMount, V1Container,
-    V1LocalObjectReference, V1PodSpec,
-    V1ObjectMeta, V1Volume, V1PersistentVolumeSpec,
     V1AzureFilePersistentVolumeSource,
     V1Container,
     V1CSIPersistentVolumeSource,
@@ -233,7 +230,9 @@ class TaskPod:
             self.env_init.append(V1EnvVar(name="FROM_DIALECT", value=self.db_query["dialect"]))
             self.env_init.append(V1EnvVar(name="TO_DIALECT", value=self.dataset.type))
 
-        self.env.append(V1EnvVar(name="CONNECTION_STRING", value=await self.dataset.get_connection_string()))
+        self.env.append(
+            V1EnvVar(name="CONNECTION_STRING", value=await self.dataset.get_connection_string())
+        )
         self.env.append(V1EnvVar(name="CDM_SCHEMA", value=self.dataset.schema_read))
         self.env.append(V1EnvVar(name="WRITE_SCHEMA", value=self.dataset.schema_write))
         self.env.append(V1EnvVar(name="ORACLE_SID", value=self.dataset.name))

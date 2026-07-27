@@ -12,6 +12,10 @@ lint:
 	isort --check-only --diff ./app
 	black --check ./app --line-length=99 --diff
 
+format:
+	isort ./app
+	black ./app --line-length=99
+
 build_docker:
 	docker build . -t ghcr.io/aridhia-open-source/federated_node_run:${TAG}
 

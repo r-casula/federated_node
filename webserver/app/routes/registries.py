@@ -29,7 +29,7 @@ router = APIRouter(tags=["registries"], prefix="/registries")
 async def list_registries(
     params: Annotated[RegistryFilters, Query()],
     request: Request,
-    session: DBSession = Depends(get_db)
+    session: DBSession = Depends(get_db),
 ) -> dict[str, Any]:
     """
     GET /registries endpoint.

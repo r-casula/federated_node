@@ -27,8 +27,7 @@ router = APIRouter(tags=["admin"])
 
 @router.get("/audit", dependencies=[Depends(Auth("can_do_admin"))])
 async def get_audit_logs(
-    params: Annotated[AuditFilters, Query()],
-    session: AsyncSession = Depends(get_db)
+    params: Annotated[AuditFilters, Query()], session: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     """
     GET /audit endpoint.
@@ -45,9 +44,7 @@ async def get_audit_logs(
 )
 @audit
 async def update_delivery_secret(
-    request: Request,
-    body: DeliverySecretPost,
-    session: AsyncSession = Depends(get_db)
+    request: Request, body: DeliverySecretPost, session: AsyncSession = Depends(get_db)
 ) -> None:
     """
     PATCH /delivery-secret
