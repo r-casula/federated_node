@@ -1,19 +1,15 @@
-import re
-from app.helpers.base_model import Base
-from app.helpers.exceptions import InvalidRequest
+from typing import Any
+
+from pydantic import BaseModel
+from sqlalchemy import DateTime, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.helpers.base_model import BaseModel as DBBaseModel
 
 
-FILTERS = [
-    'ne',
-    'eq',
-    'lt',
-    'gt',
-    'lte',
-    'gte',
-]
-
-
-def parse_query_params(model: Base, query_params: dict): # type: ignore
+async def apply_filters(
+    db: AsyncSession, model: DBBaseModel, filter_dto: BaseModel, as_pagination: bool = True
+) -> dict[str, Any] | Any:
     """
     We aim to convert query strings in models fields
     to be used as filters.
@@ -25,44 +21,45 @@ def parse_query_params(model: Base, query_params: dict): # type: ignore
         - __gt  => greater than
         - __lt  => less than
         - __ne  => not equal
-    Parameters
-    ----------
-    :param model: The Table model to look against the query args
-    :param query_params: the request args => request.args.copy()
     """
-    try:
-        page = int(query_params.pop("page", '1'))
-        per_page = int(query_params.pop("per_page", '25'))
-    except ValueError as ve:
-        raise InvalidRequest("page and per_page parameters should be integers") from ve
+    query = select(model)
+    # filter_dto.model_dump(exclude_none=True) gives us only what the user sent
+    filters: dict[str, Any] = filter_dto.model_dump(
+        exclude={"page", "per_page"}, exclude_none=True
+    )
 
-    current_query = model.query
-    for qp_f, qp_v in query_params.items():
-        added = False
-        field = re.sub(r'(=|__).*', '', qp_f)
-        for k in FILTERS:
-            if re.findall(f'.+__{k}$', qp_f):
-                if k == 'ne':
-                    current_query = current_query.filter(getattr(model, field) != qp_v)
-                if k == 'eq':
-                    current_query = current_query.filter(getattr(model, field) == qp_v)
-                if k == 'gt':
-                    current_query = current_query.filter(getattr(model, field) > qp_v)
-                if k == 'lt':
-                    current_query = current_query.filter(getattr(model, field) < qp_v)
-                if k == 'gte':
-                    current_query = current_query.filter(getattr(model, field) >= qp_v)
-                if k == 'lte':
-                    current_query = current_query.filter(getattr(model, field) <= qp_v)
-                added = True
-                break
+    operators = {
+        "lte": lambda col, val: col <= val,
+        "gte": lambda col, val: col >= val,
+        "gt": lambda col, val: col > val,
+        "lt": lambda col, val: col < val,
+        "ne": lambda col, val: col != val,
+        "eq": lambda col, val: col == val,
+    }
 
-        if not getattr(model, field, None):
-            raise InvalidRequest(f"{field} is not a valid field")
+    for key, value in filters.items():
+        if "__" in key:
+            field_name, op_name = key.split("__")
+        else:
+            field_name, op_name = key, "eq"
 
-        if not added:
-            # We are in the = case
-            current_query = current_query.filter(getattr(model, field) == qp_v)
+        column = getattr(model, field_name)
+        if column.type.__class__ == DateTime:
+            column = func.date(column)
+            value = func.date(value)
+        query = query.where(operators[op_name](column, value))
 
-    return current_query.paginate(page=page, per_page=per_page)
+    results = await db.execute(query)
+    items = results.scalars().all()
+    total = len(items)
 
+    if as_pagination:
+        start_idx = filter_dto.per_page * (filter_dto.page - 1)
+        return {
+            "items": items[start_idx : start_idx + filter_dto.per_page],
+            "total": total,
+            "page": filter_dto.page,
+            "per_page": filter_dto.per_page,
+            "pages": (total + filter_dto.per_page - 1) // filter_dto.per_page,
+        }
+    return query

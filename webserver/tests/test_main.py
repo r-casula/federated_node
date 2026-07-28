@@ -1,35 +1,40 @@
 import os
+import httpx
 import responses
+from pytest import mark
 from unittest import mock
-from requests.exceptions import ConnectionError
+
 from app.helpers.keycloak import URLS
+from app.helpers.settings import kc_settings
 from app.helpers.exceptions import AuthenticationError
 
 
 class TestLogin:
-    def test_login_successful(self, client):
+    @mark.asyncio
+    async def test_login_successful(self, client, mock_kc_client_general_route):
         """
         Simple test to make sure /login returns a token
         """
-        login_request = client.post(
+        login_request = await client.post(
             "/login",
             data={
-                "username": os.getenv("KEYCLOAK_ADMIN"),
-                "password": os.getenv("KEYCLOAK_ADMIN_PASSWORD")
+                "username": kc_settings.keycloak_admin,
+                "password": kc_settings.keycloak_admin_password
             },
             headers={
                 'Content-Type': 'application/x-www-form-urlencoded'
             }
         )
         assert login_request.status_code == 200
-        assert list(login_request.json.keys()) == ["token"]
+        assert list(login_request.json().keys()) == ["token"]
 
-    def test_login_unsuccessful(self, client, mock_kc_client):
+    @mark.asyncio
+    async def test_login_unsuccessful(self, client, mock_kc_client_general_route, base_kc_mock_args):
         """
         Simple test to make sure /login returns 401 with incorrect credentials
         """
-        mock_kc_client["main_kc"].return_value.get_token.side_effect = AuthenticationError("Failed to login")
-        login_request = client.post(
+        base_kc_mock_args.get_token.side_effect = AuthenticationError("Failed to login")
+        login_request = await client.post(
             "/login",
             data={
                 "username": "not_a_user",
@@ -43,54 +48,63 @@ class TestLogin:
 
 
 class TestHealthCheck:
-    def test_health_check(self, client):
+    @mark.asyncio
+    async def test_health_check(self, client, respx_mock):
         """
         Check that the HC returns 200 in optimal conditions
         """
-        with responses.RequestsMock() as rsps:
-            rsps.add(
-                responses.GET,
-                URLS["health_check"],
-                status=200
+        respx_mock.get(
+            URLS["health_check"]
+        ).mock(
+            return_value=httpx.Response(
+                status_code=200
             )
-            hc_resp = client.get("/health_check")
+        )
+        hc_resp = await client.get("/health_check")
         assert hc_resp.status_code == 200
 
-    @mock.patch('app.main.requests.get', side_effect=ConnectionError("Some failure"))
-    def test_health_check_fails(self, mock_req, client):
+    @mark.asyncio
+    async def test_health_check_fails(self, respx_mock, client):
         """
         Check that the HC returns 500 with keycloak connection issues
         """
-        hc_resp = client.get("/health_check")
+        respx_mock.get(
+            URLS["health_check"]
+        ).mock(
+            side_effect=httpx.ConnectError("Some failure")
+        )
+        hc_resp = await client.get("/health_check")
         assert hc_resp.status_code == 502
-        assert hc_resp.json == {'keycloak': False, 'status': 'non operational'}
+        assert hc_resp.json() == {'keycloak': False, 'status': 'non operational'}
 
 
 class TestTokenRefresh:
-    def test_refresh_token_200(self, client, mock_kc_client):
+    @mark.asyncio
+    async def test_refresh_token_200(self, client, mock_kc_client_general_route, base_kc_mock_args):
         """
         Simmple test to make sure a refresh token is returned
         when a valid token is used in the request header
         """
         # Mocking the requests for the specific token
         valid_token = "eydjn2onoin"
-        mock_kc_client["main_kc"].return_value.exchange_global_token.return_value = "exch_token"
+        base_kc_mock_args.exchange_global_token.return_value = "exch_token"
 
-        resp = client.post(
+        resp = await client.post(
             "/refresh_token",
             headers={"Authorization": f"Bearer {valid_token}"}
         )
         assert resp.status_code == 200
-        assert "token" in resp.json
+        assert "token" in resp.json()
 
-    def test_refresh_token_401(self, client, mock_kc_client):
+    @mark.asyncio
+    async def test_refresh_token_401(self, client, base_kc_mock_args, mock_kc_client_general_route):
         """
         Simmple test to make sure an error is returned
         when an invalid/expired token is used in the request header
         """
-        mock_kc_client["main_kc"].return_value.is_token_valid.return_value = False
+        base_kc_mock_args.is_token_valid.return_value = False
         invalid_token = "not a token"
-        resp = client.post(
+        resp = await client.post(
             "/refresh_token",
             headers={"Authorization": f"Bearer {invalid_token}"}
         )

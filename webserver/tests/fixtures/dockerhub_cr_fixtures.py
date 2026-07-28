@@ -1,79 +1,62 @@
-from typing import Any, Generator
-import pytest
-import responses
-from unittest.mock import Mock
+from typing import Literal
+import httpx
+from pytest_asyncio import fixture
+from unittest.mock import AsyncMock, Mock
 
 from app.helpers.container_registries import DockerRegistry
 from app.models.container import Container
 from app.models.registry import Registry
-from app.helpers.keycloak import KEYCLOAK_URL
+
+from .common_registry_fixtures import *
 
 
 DOCKER_CLASS = 'app.models.registry.DockerRegistry'
 
-@pytest.fixture
-def cr_name():
+@fixture
+def cr_name() -> Literal['dockerhubcr.io']:
     return "dockerhubcr.io"
 
-@pytest.fixture
+@fixture
 def registry_client(mocker):
     mocker.patch(
         DOCKER_CLASS,
         return_value=Mock()
     )
 
-@pytest.fixture
-def cr_client(mocker, reg_k8s_client):
-    return mocker.patch(
-        'app.helpers.container_registries.DockerRegistry',
-        return_value=Mock(
-            login=Mock(return_value="access_token")
-        )
-    )
-
-@pytest.fixture
+@fixture
 def cr_client_404(mocker):
     mocker.patch(
         DOCKER_CLASS,
         return_value=Mock(
             login=Mock(return_value="access_token"),
-            has_image_tag_or_sha=Mock(return_value=False)
+            has_image_tag_or_sha=AsyncMock(return_value=False)
         )
     )
 
-@pytest.fixture
-def dockerhub_login_request() -> Generator[responses.RequestsMock, Any, None]:
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as rsps:
-        rsps.add_passthru(KEYCLOAK_URL)
-        rsps.add(
-            responses.GET,
-            "https://hub.docker.com/v2/users/login/",
+@fixture
+async def dockerhub_login_request(respx_mock):
+    respx_mock.get(
+        "https://hub.docker.com/v2/users/login/"
+    ).mock(
+        return_value=httpx.Response(
             json={"token": "12345asdf"},
-            status=200
+            status_code=200
         )
-        yield rsps
+    )
 
-@pytest.fixture
-def cr_class(client, cr_name, dockerhub_login_request):
-    with dockerhub_login_request:
-        return DockerRegistry(cr_name, creds={"user": "", "token": ""})
+@fixture
+async def cr_class(client, cr_name, dockerhub_login_request) -> DockerRegistry:
+    return await DockerRegistry.create(cr_name, creds={"user": "", "token": ""})
 
-@pytest.fixture
-def registry(client, mocker, reg_k8s_client, dockerhub_login_request, cr_name) -> Registry:
-    with dockerhub_login_request:
-        dockerhub_login_request.add(
-            responses.GET,
-            "https://hub.docker.com/v2/users/login/",
-            json={"token": "12345asdf"},
-            status=200
-        )
-        reg = Registry(cr_name, '', '')
-        reg.add()
-        return reg
+@fixture
+async def registry(client, respx_mock, registry_secret_mock, dockerhub_login_request, cr_name, db_session) -> Registry:
+    reg = Registry(url=cr_name, username='', password='')
+    await reg.add(db_session)
+    return reg
 
-@pytest.fixture
-def container(client, k8s_client, registry, image_name) -> Container:
+@fixture
+async def container(client, k8s_client, registry, image_name, db_session) -> Container:
     img, tag = image_name.split(':')
-    cont = Container(img, registry, tag)
-    cont.add()
+    cont = Container(name=img, registry=registry, tag=tag)
+    await cont.add(db_session)
     return cont

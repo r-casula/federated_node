@@ -1,7 +1,7 @@
 """remove ml and dashboard from containers
 
 Revision ID: a18ca22994f6
-Revises: 989f740f31f8
+Revises: 4ed9f908f50a
 Create Date: 2026-04-23 12:00:00.000000
 
 """
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision = 'a18ca22994f6'
-down_revision = '8faa556d4f76'
+down_revision = '4ed9f908f50a'
 branch_labels = None
 depends_on = None
 

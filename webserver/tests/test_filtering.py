@@ -1,9 +1,15 @@
+from pytest import mark
+
+from datetime import datetime as dt, timedelta as td
 from app.models.audit import Audit
 
 
-def test_filter_by_date(
+@mark.asyncio
+async def test_filter_by_date(
         client,
         simple_admin_header,
+        db_session,
+        mock_kc_client_general_route
 ):
     """
     Testing the efficacy of filtering by date fields
@@ -15,13 +21,21 @@ def test_filter_by_date(
         - __lt  => less than
         - __ne  => not equal
     """
-    client.get('/datasets/', headers=simple_admin_header)
-    client.get('/datasets/', headers=simple_admin_header)
-    client.get('/datasets/', headers=simple_admin_header)
+    base_audit = {
+        "ip_address": "127.0.0.1",
+        "http_method": "GET",
+        "endpoint": "/datasets",
+        "api_function": "get_datasets",
+        "requested_by": "admin",
+        "status_code": 200,
+        "details": "",
+    }
+    for idx in range(3):
+        base_audit["event_time"] = dt.now() - td(days=idx)
+        await Audit(**base_audit).add(db_session)
 
-    date_filter = Audit.query.all()[1].event_time
     filters = {
-        '=': 1,
+        '': 1,
         '__lte': 2,
         '__gte': 2,
         '__eq': 1,
@@ -29,7 +43,15 @@ def test_filter_by_date(
         '__lt': 1,
         '__ne': 2
     }
+    target_date = (dt.now() - td(days=1)).date().strftime("%Y-%m-%d")
     for fil, expected_results in filters.items():
-        resp = client.get("/audit", query_string={f"event_time{fil}": date_filter}, headers=simple_admin_header)
+        resp = await client.get(
+            "/audit",
+            params={
+                f"event_time{fil}": target_date,
+                "endpoint": "/datasets"
+            },
+            headers=simple_admin_header
+        )
         assert resp.status_code == 200
-        assert resp.json["total"] == expected_results
+        assert resp.json()["total"] == expected_results, fil

@@ -1,32 +1,33 @@
 from datetime import datetime
-from flask import request
-from typing import Self
-from flask_sqlalchemy import SQLAlchemy
-from flask_sqlalchemy.pagination import QueryPagination
-from sqlalchemy import create_engine, Column
-from sqlalchemy.orm import Relationship, declarative_base
-from app.helpers.exceptions import DBRecordNotFoundError, InvalidDBEntry, InvalidRequest
+from typing import Any, AsyncGenerator, List, Self
+
+from sqlalchemy import Column, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio.engine import AsyncEngine
+from sqlalchemy.orm import DeclarativeBase, Relationship
+from sqlalchemy.sql.elements import KeyedColumnElement
+
 from app.helpers.const import build_sql_uri
+from app.helpers.exceptions import DBRecordNotFoundError, InvalidDBEntry
+
+engine: AsyncEngine = create_async_engine(build_sql_uri(with_async=True))
+SessionLocal: async_sessionmaker[AsyncSession] = async_sessionmaker(
+    autocommit=False, autoflush=False, bind=engine
+)
 
 
-engine = create_engine(build_sql_uri())
-Base = declarative_base()
-db = SQLAlchemy(model_class=Base)
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        await session.close()
 
 
 # Another helper class for common methods
-class BaseModel():
-    @classmethod
-    def _query(cls) -> QueryPagination:
-        try:
-            page = int(request.values.get("page", '1'))
-            per_page = int(request.values.get("per_page", '25'))
-        except ValueError as ve:
-            raise InvalidRequest("page and per_page parameters should be integers") from ve
+class BaseModel(DeclarativeBase):
 
-        return cls.query.paginate(page=page, per_page=per_page)
-
-    def sanitized_dict(self) -> dict[str, bool|int|str]:
+    def sanitized_dict(self) -> dict[str, bool | int | str]:
         """
         Based on the list of column names, conditionally render the values
         in a dictionary
@@ -45,28 +46,38 @@ class BaseModel():
                     jsonized[field] = str(val)
         return jsonized
 
-    def add(self, commit=True):
-        db.session.add(self)
-        db.session.flush()
+    async def add(self, session: AsyncSession, commit: bool = True) -> None:
+        session.add(self)
         if commit:
-            db.session.commit()
+            await session.commit()
+        await session.flush([self])
+        await session.refresh(self)
 
-    def delete(self, commit=True):
-        db.session.delete(self)
-        db.session.flush()
+    async def update(self, session: AsyncSession, data: dict) -> None:
+        """
+        Should help in managing instances created in other sessions
+        """
+        persistent_self = await session.merge(self)
+        for key, value in data.items():
+            setattr(persistent_self, key, value)
+
+        await session.flush()
+        await session.refresh(persistent_self)
+        for key in data:
+            setattr(self, key, getattr(persistent_self, key))
+
+    async def delete(self, session: AsyncSession, commit=True) -> None:
+        await session.delete(self)
         if commit:
-            db.session.commit()
+            await session.commit()
 
     @classmethod
-    def get_all(cls) -> list[dict]:
-        obj_list = cls._query()
-        jsonized = []
-        for obj in obj_list.items:
-            jsonized.append(obj.sanitized_dict())
-        return obj_list
+    async def get_all(cls, session) -> list[dict]:
+        query = await session.execute(select(cls))
+        return query.scalars().all()
 
     @classmethod
-    def _get_fields(cls) -> list[Column]:
+    def _get_fields(cls) -> List[KeyedColumnElement[Any]]:
         return cls.__table__.columns._all_columns
 
     @classmethod
@@ -82,14 +93,16 @@ class BaseModel():
             - not have a default value
             - not be a primary key (e.g. id is not allowed as a request body)
         """
-        return not (attribute.nullable or attribute.primary_key or attribute.server_default is not None)
+        return not (
+            attribute.nullable or attribute.primary_key or attribute.server_default is not None
+        )
 
     @classmethod
     def _get_required_fields(cls) -> list[str]:
         return [f.name for f in cls._get_fields() if cls.is_field_required(f)]
 
     @classmethod
-    def validate(cls, data:dict) -> dict:
+    def validate(cls, data: dict) -> dict:
         """
         Make sure we have all required fields. Set to None if missing
         """
@@ -98,7 +111,12 @@ class BaseModel():
         valid = data.copy()
         for k, v in data.items():
             field = getattr(cls, k, None)
-            if field is None or isinstance(v, dict) or isinstance(v, list) or isinstance(field.property, Relationship):
+            if (
+                field is None
+                or isinstance(v, dict)
+                or isinstance(v, list)
+                or isinstance(field.property, Relationship)
+            ):
                 continue
             if getattr(cls, k).nullable:
                 valid[k] = v
@@ -106,16 +124,27 @@ class BaseModel():
                 raise InvalidDBEntry(f"Field {k} has invalid value")
         for req_field in cls._get_required_fields():
             if req_field not in list(valid.keys()):
-                raise InvalidDBEntry(f"Field \"{req_field}\" missing")
+                raise InvalidDBEntry(f'Field "{req_field}" missing')
         return valid
 
     @classmethod
-    def get_by_id(cls, obj_id:int) -> Self:
+    async def get_by_id(cls, session: AsyncSession, obj_id: int) -> Self | None:
         """
         Common wrapper to get by id, and raise an
         exception if not found
         """
-        obj = cls.query.filter(cls.id == obj_id).one_or_none()
+        q = select(cls).where(getattr(cls, "id") == obj_id)
+        return (await session.execute(q)).scalars().one_or_none()
+
+    @classmethod
+    async def get_by_id_or_raise(cls, session: AsyncSession, obj_id: int) -> Self:
+        """
+        Common wrapper to get by id, and raise an
+        exception if not found
+        """
+        obj: Self | None = await cls.get_by_id(session, obj_id)
         if obj is None:
-            raise DBRecordNotFoundError(f"{cls.__name__.capitalize()} with id {obj_id} does not exist")
+            raise DBRecordNotFoundError(
+                f"{cls.__name__.capitalize()} with id {obj_id} does not exist"
+            )
         return obj

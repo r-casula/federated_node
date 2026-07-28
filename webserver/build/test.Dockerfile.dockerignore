@@ -5,5 +5,6 @@
 !requirements-dev.txt
 !alembic.ini
 !setup.cfg
+!pytest.ini
 !test-entrypoint.sh
 !tests/**

@@ -1,57 +1,50 @@
-import pytest
-from unittest.mock import Mock
+from pytest_asyncio import fixture
+from unittest.mock import AsyncMock, Mock
 
 from app.helpers.container_registries import GitHubRegistry
 from app.models.container import Container
 from app.models.registry import Registry
 
+from .common_registry_fixtures import *
+
 
 GH_CLASS = 'app.models.registry.GitHubClient'
 
 
-@pytest.fixture
+@fixture
 def cr_name():
     return "ghcr.io/somecr"
 
-@pytest.fixture
+@fixture
 def registry_client(mocker):
     mocker.patch(
         GH_CLASS,
         return_value=Mock()
     )
 
-@pytest.fixture
-def cr_client(mocker, reg_k8s_client):
-    return mocker.patch(
-        'app.helpers.container_registries.GitHubClient',
-        return_value=Mock(
-            login=Mock(return_value="access_token"),
-        )
-    )
+@fixture
+async def cr_class(cr_name) -> GitHubRegistry:
+    return await GitHubRegistry.create(cr_name, creds={"user": "", "token": "sometoken"})
 
-@pytest.fixture
-def cr_class(cr_name) -> GitHubRegistry:
-    return GitHubRegistry(cr_name, creds={"user": "", "token": "sometoken"})
-
-@pytest.fixture
+@fixture
 def cr_client_404(mocker):
     mocker.patch(
         GH_CLASS,
         return_value=Mock(
             login=Mock(return_value="access_token"),
-            has_image_tag_or_sha=Mock(return_value=False)
+            has_image_tag_or_sha=AsyncMock(return_value=False)
         )
     )
 
-@pytest.fixture
-def registry(client, reg_k8s_client, cr_name) -> Registry:
-    reg = Registry(cr_name, '', '')
-    reg.add()
+@fixture
+async def registry(client, registry_secret_mock, cr_name, db_session) -> Registry:
+    reg = Registry(url=cr_name, username='', password='')
+    await reg.add(db_session)
     return reg
 
-@pytest.fixture
-def container(client, k8s_client, registry, image_name) -> Container:
+@fixture
+async def container(client, k8s_client, registry, image_name, db_session) -> Container:
     img, tag = image_name.split(':')
-    cont = Container(img, registry, tag)
-    cont.add()
+    cont = Container(name=img, registry=registry, tag=tag)
+    await cont.add(db_session)
     return cont

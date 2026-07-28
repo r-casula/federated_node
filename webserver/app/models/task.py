@@ -1,245 +1,181 @@
-import logging
 import json
-import re
+import logging
 from datetime import datetime, timedelta
-from http import HTTPStatus
-from kubernetes.client import V1CustomResourceDefinition
-from kubernetes.client.exceptions import ApiException
-from sqlalchemy import Column, Integer, DateTime, String, ForeignKey, Boolean
-from sqlalchemy.orm import relationship
-from sqlalchemy.sql import func
+from typing import Any, Literal, Self, Tuple
 from uuid import uuid4
 
 import urllib3
-from app.helpers.const import (
-    AUTO_DELIVERY_RESULTS, CLEANUP_AFTER_DAYS, CRD_DOMAIN, MEMORY_RESOURCE_REGEX, MEMORY_UNITS, CPU_RESOURCE_REGEX, PUBLIC_URL, TASK_CONTROLLER,
-    TASK_NAMESPACE, TASK_POD_RESULTS_PATH, TASK_POD_INPUTS_PATH, RESULTS_PATH, TASK_REVIEW, ENABLE_IMAGE_WHITELIST
+from kubernetes_asyncio.client.exceptions import ApiException
+from kubernetes_asyncio.client.models.v1_container_state_terminated import (
+    V1ContainerStateTerminated,
 )
-from app.helpers.base_model import BaseModel, db
-from app.helpers.keycloak import Keycloak
-from app.helpers.kubernetes import KubernetesBatchClient, KubernetesCRDClient, KubernetesClient
-from app.helpers.exceptions import DBError, InvalidRequest, TaskCRDExecutionException, TaskImageException, TaskExecutionException
-from app.helpers.task_pod import TaskPod
-from app.models.dataset import Dataset
-from app.models.container import Container
-from app.models.registry import Registry
-from app.models.request import Request
+from kubernetes_asyncio.client.models.v1_container_status import V1ContainerStatus
+from kubernetes_asyncio.client.models.v1_job import V1Job
+from kubernetes_asyncio.client.models.v1_pod import V1Pod
+from kubernetes_asyncio.client.models.v1_pod_list import V1PodList
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Select, String, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Mapped, joinedload, mapped_column, relationship
+from sqlalchemy.sql import func
 
-logger = logging.getLogger('task_model')
+from app.helpers.base_model import BaseModel
+from app.helpers.const import REVIEW_STATUS
+from app.helpers.container_registries import BaseRegistry
+from app.helpers.exceptions import (
+    DBError,
+    DBRecordNotFoundError,
+    InvalidRequest,
+    TaskCRDExecutionException,
+    TaskExecutionException,
+    TaskImageException,
+)
+from app.helpers.keycloak import Keycloak
+from app.helpers.kubernetes import KubernetesBatchClient, KubernetesClient, KubernetesCRDClient
+from app.helpers.settings import settings
+from app.helpers.task_pod import TaskPod
+from app.models.container import Container
+from app.models.dataset import Dataset
+from app.models.registry import Registry
+from app.schemas.tasks import TaskRead
+
+logger = logging.getLogger("task_model")
 logger.setLevel(logging.INFO)
 
 
-REVIEW_STATUS = {
-    True: "Approved Release",
-    False: "Blocked Release",
-    None: "Pending Review"
-}
+class Task(BaseModel):
+    __tablename__ = "tasks"
 
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    name: Mapped[str] = mapped_column(String(256), nullable=False)
+    docker_image: Mapped[str] = mapped_column(String(256), nullable=False)
+    description: Mapped[str] = mapped_column(String(4096))
+    pod_status: Mapped[str] = mapped_column(String(256), server_default="scheduled")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=False, insert_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=False), nullable=True, onupdate=func.now()
+    )
+    requested_by: Mapped[str] = mapped_column(String(256), nullable=False)
+    review_status: Mapped[bool] = mapped_column(Boolean, nullable=True)
 
-class Task(db.Model, BaseModel):
-    __tablename__ = 'tasks'
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(256), nullable=False)
-    docker_image = Column(String(256), nullable=False)
-    description = Column(String(4096))
-    status = Column(String(256), default='scheduled')
-    created_at = Column(DateTime(timezone=False), server_default=func.now())
-    updated_at = Column(DateTime(timezone=False), onupdate=func.now())
-    requested_by = Column(String(256), nullable=False)
-    review_status = Column(Boolean, nullable=True)
-    dataset_id = Column(Integer, ForeignKey(Dataset.id, ondelete='CASCADE'))
-    dataset = relationship("Dataset")
+    dataset_id: Mapped[int] = mapped_column(Integer, ForeignKey(Dataset.id, ondelete="CASCADE"))
+    dataset: Mapped["Dataset"] = relationship("Dataset", overlaps="task", lazy="selectin")
 
-    def __init__(self,
-                 name:str,
-                 docker_image:str,
-                 requested_by:str,
-                 dataset:Dataset,
-                 executors:list[dict] = [],
-                 tags:dict = {},
-                 resources:dict = {},
-                 inputs:dict = {},
-                 outputs:dict = {},
-                 description:str = '',
-                 **kwargs
-                 ):
-        self.name = name
-        self.status = 'scheduled'
-        self.docker_image = docker_image
-        self.requested_by = requested_by
-        self.dataset = dataset
-        self.description = description
+    def __init__(self, **kwargs) -> None:
+        self.executors = kwargs.pop("executors")
+        self.outputs = kwargs.pop("outputs", {})
+        self.inputs = kwargs.pop("inputs", {})
+        self.is_from_controller = kwargs.pop("from_controller", False)
+        self.db_query = kwargs.pop("db_query", {})
+        self.resources = kwargs.pop("resources", {})
+        self.regcred_secret = kwargs.pop("regcred_secret", "")
         self.created_at = datetime.now()
         self.updated_at = datetime.now()
-        self.tags = tags
-        self.executors = executors
-        self.resources = resources
-        self.inputs = inputs
-        self.outputs = outputs
-        self.is_from_controller = kwargs.get("from_controller", False)
-        self.db_query = kwargs.get("db_query", {})
+        super().__init__(**kwargs)
 
     @classmethod
-    def validate(cls, data:dict):
-        data["name"] = (data.get("name") or "").replace(" ", "")
-        if not data["name"]:
-            raise InvalidRequest("name is a mandatory field")
+    async def get_by_id(cls, session: AsyncSession, obj_id: int) -> Self | None:
+        q = select(cls).options(joinedload(cls.dataset)).where(cls.id == obj_id)
+        task_query_results = await session.execute(q)
+        task: Self | None = task_query_results.scalars().one_or_none()
+        return task
 
-        kc_client = Keycloak()
-        user_token = Keycloak.get_token_from_headers()
+    @classmethod
+    async def get_by_id_dict(cls, session: AsyncSession, obj_id: int) -> TaskRead | None:
+        task: Self | None = await cls.get_by_id(session, obj_id)
+        if task:
+            return TaskRead.model_validate(task, from_attributes=True).model_copy(
+                update={"status": await task.update_status()}
+            )
 
-        decoded_token = kc_client.decode_token(user_token)
-        data["requested_by"] = kc_client.get_user_by_email(decoded_token["email"])["id"]
-        user = kc_client.get_user_by_id(data["requested_by"])
-        # Support only for one image at a time, the standard is executors == list
-        executors = data["executors"][0]
-        data["docker_image"] = executors["image"]
-        is_from_controller = data.pop("task_controller", False)
-        repository = data.pop("repository", None)
+    @classmethod
+    async def get_by_id_or_raise(cls, session: AsyncSession, obj_id: int) -> Self:
+        task: Self | None = await cls.get_by_id(session, obj_id)
 
-        data = super().validate(data)
+        if task is None:
+            raise DBRecordNotFoundError(f"Task with id {obj_id} does not exist")
 
-        data["from_controller"] = is_from_controller
-        # Dataset validation
-        if repository:
-            data["dataset"] = Dataset.query.filter(
-                Dataset.repository.ilike(repository)
-            ).one_or_none()
-            if data["dataset"] is None:
-                raise InvalidRequest(f"No datasets linked with the repository {repository}")
+        return task
 
-        elif kc_client.is_user_admin(user_token):
-            ds_id = data.get("tags", {}).get("dataset_id")
-            ds_name = data.get("tags", {}).get("dataset_name")
-            if ds_name or ds_id:
-                data["dataset"] = Dataset.get_dataset_by_name_or_id(name=ds_name, id=ds_id)
-            else:
-                raise InvalidRequest("Administrators need to provide `tags.dataset_id` or `tags.dataset_name`")
+    @classmethod
+    async def split_registry_from_image(
+        cls, session: AsyncSession, docker_image: str
+    ) -> tuple[str, str]:
+        """
+        Find the registry
+        """
+        for i in range(len(docker_image.split("/"))):
+            registry = "/".join(docker_image.split("/")[0:i])
+
+            q = select(func.count(Registry.id)).where(Registry.url == registry)
+
+            if (await session.execute(q)).scalar_one() == 1:
+                return registry, "/".join(docker_image.split("/")[i:])
+
+        raise InvalidRequest(
+            "Could not find the image in the mapped registries. Check the image has the full name"
+        )
+
+    @classmethod
+    async def get_image_with_repo(
+        cls, session: AsyncSession, docker_image: str, string_only: bool = True
+    ) -> str | Container:
+        """
+        Looks through the CRs for the image and if exists,
+        returns the full image name with the repo prefixing the image.
+        """
+        # When image whitelisting is enabled, the image must be explicitly allowed
+        if settings.image_whitelist_enabled and not await Container.validate_image_whitelisted(
+            session, docker_image
+        ):
+            raise TaskImageException(f"Image {docker_image} is not whitelisted")
+
+        registry, image = await cls.split_registry_from_image(session, docker_image)
+
+        tag = None
+        sha = None
+        if "@" in image:
+            image_name, sha = image.split("@")
         else:
-            data["dataset"] = Request.get_active_project(
-                data["project_name"],
-                user["id"]
-            ).dataset
+            image_name, tag = image.split(":")
 
-        # Docker image validation
-        Container.validate_image_format(data["docker_image"], data["docker_image"])
-
-        # Validate that the image is whitelisted
-        if ENABLE_IMAGE_WHITELIST:
-            if not Container.validate_image_whitelisted(data["docker_image"]):
-                raise TaskImageException(f"Image {data['docker_image']} is not whitelisted", code=HTTPStatus.FORBIDDEN)
-
-        # Validate that the image exists on the registry
-        if not Registry.validate_image_exist(data["docker_image"]):
-            raise TaskImageException(f"Image {data['docker_image']} not found on our repository", code=HTTPStatus.NOT_FOUND)
-
-        # Output volumes validation
-        if not isinstance(data.get("outputs", {}), dict):
-            raise InvalidRequest("\"outputs\" field must be a json object or dictionary")
-        if not data.get("outputs", {}):
-            data["outputs"] = {"results": TASK_POD_RESULTS_PATH}
-        if not isinstance(data.get("inputs", {}), dict):
-            raise InvalidRequest("\"inputs\" field must be a json object or dictionary")
-        if not data.get("inputs", {}):
-            data["inputs"] = {"inputs.csv": TASK_POD_INPUTS_PATH}
-
-        # Validate resource values
-        if "resources" in data:
-            cls.validate_cpu_resources(
-                data["resources"].get("limits", {}).get("cpu"),
-                data["resources"].get("requests", {}).get("cpu")
+        q: Select[Tuple[Container]] = (
+            select(Container)
+            .options(joinedload(Container.registry))
+            .where(
+                Container.name == image_name,
+                Registry.url == registry,
             )
-            cls.validate_memory_resources(
-                data["resources"].get("limits", {}).get("memory"),
-                data["resources"].get("requests", {}).get("memory")
+            .where(
+                (
+                    ((Container.tag == tag) & (Container.tag is not None))
+                    | ((Container.sha == sha) & (Container.sha is not None))
+                )
             )
-        if data.get("db_query") is not None and "query" not in data["db_query"]:
-            raise InvalidRequest("`db_query` field must include a `query`")
+            .join(Registry)
+        )
+        image: Container = (await session.execute(q)).scalars().one_or_none()
 
-        data["db_query"] = data.pop("db_query", {})
-        return data
+        if image is None:
+            raise TaskExecutionException(f"Image {docker_image} could not be found")
 
-    @classmethod
-    def validate_cpu_resources(cls, limit_value:str, request_value:str):
-        """
-        Given a value for the cpu limits or requests, make sure it conforms to
-        accepted k8s values.
-        e.g.
-            - 100m
-            - 0.1
-            - 1
-        """
-        for value in [limit_value, request_value]:
-            if value is None or value == "":
-                return
-            cpu_error_message = f"Cpu resource value {value} not valid."
-            if not re.match(CPU_RESOURCE_REGEX, value):
-                raise InvalidRequest(cpu_error_message)
-        if cls.convert_cpu_values_to_int(limit_value) < cls.convert_cpu_values_to_int(request_value):
-            raise InvalidRequest("Cpu limit cannot be lower than request")
+        registry_client: BaseRegistry = await image.registry.get_registry_class()
+        if not await registry_client.has_image_tag_or_sha(image.name, image.tag, image.sha):
+            raise TaskImageException(f"Image {docker_image} not found on our repository")
+        if string_only:
+            return image.full_image_name()
 
-    @classmethod
-    def validate_memory_resources(cls, limit_value:str, request_value:str):
-        """
-        Given a value for the memory limits or requests, make sure it conforms to
-        accepted k8s values.
-        e.g.
-            - 128974848
-            - 129e6
-            - 129M
-            - 128974848000m
-            - 123Mi
-        """
-        for value in [limit_value, request_value]:
-            if value is None or value == "":
-                return
-            memory_error_msg = f"Memory resource value {value} not valid."
-            if not re.match(MEMORY_RESOURCE_REGEX, value):
-                raise InvalidRequest(memory_error_msg)
-        if cls.convert_memory_values_to_int(limit_value) < cls.convert_memory_values_to_int(request_value):
-            raise InvalidRequest("Memory limit cannot be lower than request")
+        return image
 
-    @classmethod
-    def convert_cpu_values_to_int(cls, val:str) -> float:
-        """
-        Since cpu values can come with different units,
-        they should be standardized to float, so that they can
-        be compared and validated to have limits > requests
-        """
-        if re.match(r'^\d+$', val):
-            return float(val)
-        if re.match(r'^\d+\.\d+$', val):
-            return float(val)
-        return float(val[:-1]) / 1000
-
-    @classmethod
-    def convert_memory_values_to_int(cls, val:str) -> int:
-        """
-        Since memory values can come with different units,
-        they should be standardized to int, so that they can
-        be compared and validated to have limits > requests
-        """
-        if re.match(r'^\d+$', val):
-            return int(val)
-        if re.match(r'^\d+e\d+$', val):
-            base, exp = val.split('e')
-            return int(base) * 10**(int(exp))
-
-        # Other accepted formats trail with some letters
-        unit_index = re.search(r'[^\d]+$', val).span()[0]
-        base = val[:unit_index]
-        unit = val[unit_index:]
-        return int(base) * MEMORY_UNITS[unit]
-
-
-    def pod_name(self):
+    def pod_name(self) -> str:
         """
         Generalization for the pod name based on the task name
         provided by the /tasks API call
         """
         return f"{self.name.lower().replace(' ', '-')}-{uuid4()}"
 
-    def get_expiration_date(self) -> str:
+    def get_expiration_date(self, as_dt: bool = False) -> str | datetime:
         """
         In order to help with the cleanup process we set a lable for
         - pod
@@ -251,198 +187,23 @@ class Task(db.Model, BaseModel):
         Running `kubectl delete pvc -n analytics -l "delete_by=$(date +%Y%m%d)"` will bulk delete
         all pvcs to be deleted today.
         """
-        return (datetime.now() + timedelta(days=CLEANUP_AFTER_DAYS)).strftime("%Y%m%d")
+        exp_date = datetime.now() + timedelta(days=settings.cleanup_after_days)
+        if as_dt:
+            return exp_date
+
+        return exp_date.strftime("%Y%m%d")
 
     def needs_crd(self):
-        return ((not self.is_from_controller) and TASK_CONTROLLER is not None and AUTO_DELIVERY_RESULTS is not None )
-
-    def run(self, validate=False):
         """
-        Method to spawn a new pod with the requested image
-        : param validate : An optional parameter to basically run in dry_run mode
-            Defaults to False
+        Wrapper for few feature flag to know if we need to handle CRDs
         """
-        v1 = KubernetesClient()
-        secret_name = self.dataset.get_creds_secret_name()
-        provided_env = self.executors[0].get("env", {})
-
-        command=None
-        if len(self.executors):
-            command=self.executors[0].get("command", '')
-
-        registry, _, _, _ = Registry.extract_image_parts(self.docker_image)
-
-        body = TaskPod(**{
-            "name": self.pod_name(),
-            "image": self.docker_image,
-            "dataset": self.dataset,
-            "db_query": self.db_query,
-            "labels": {
-                "task_id": str(self.id),
-                "requested_by": self.requested_by,
-                "dataset_id": str(self.dataset_id),
-                "delete_by": self.get_expiration_date()
-            },
-            "dry_run": 'true' if validate else 'false',
-            "environment": provided_env,
-            "command": command,
-            "mount_path": self.outputs,
-            "input_path": self.inputs,
-            "resources": self.resources,
-            "env_from": v1.create_from_env_object(secret_name),
-            "regcred_secret": registry.slugify_name()
-        }).create_pod_spec()
-        try:
-            current_pod = self.get_current_pod()
-            if current_pod:
-                raise TaskExecutionException("Pod is already running", code=409)
-
-            v1.create_namespaced_pod(
-                namespace=TASK_NAMESPACE,
-                body=body,
-                pretty='true'
-            )
-        except ApiException as e:
-            logger.error(json.loads(e.body))
-            raise InvalidRequest(f"Failed to run pod: {e.reason}") from e
-
-        if self.needs_crd():
-            # create CRD
-            self.create_controller_crd()
-
-    def get_current_pod(self, is_running:bool=True):
-        """
-        Fetches the pod object from k8s API.
-            is_running will only consider running pods only
-        """
-        v1 = KubernetesClient()
-        running_pods = v1.list_namespaced_pod(
-            TASK_NAMESPACE,
-            label_selector=f"task_id={self.id}"
+        return (
+            (not self.is_from_controller)
+            and settings.task_controller is not None
+            and settings.auto_delivery_results is not None
         )
-        try:
-            running_pods.items.sort(key=lambda x: x.metadata.creation_timestamp, reverse=True)
-            for pod in running_pods.items:
-                images = [im.image for im in pod.spec.containers]
-                statuses = []
-                if pod.status.container_statuses and is_running:
-                    statuses = [st.state.terminated for st in pod.status.container_statuses]
-                if self.docker_image in images and not statuses:
-                    return pod
-        except IndexError:
-            return
 
-    def get_status(self) -> dict | str:
-        """
-        k8s sdk returns a bunch of nested objects as a pod's status.
-        Here the objects are deconstructed and a customized dictionary is returned
-            according to the possible states.
-        Returns:
-            :dict: if the pod exists
-            :str: if the pod is not found or deleted
-        """
-        try:
-            status_obj = self.get_current_pod(is_running=False).status.container_statuses
-            if status_obj is None:
-                return self.status
-
-            status_obj = status_obj[0].state
-
-            for status in ['running', 'waiting', 'terminated']:
-                st = getattr(status_obj, status)
-                if st is not None:
-                    break
-
-            self.status = status
-            returned_status =  {
-                "started_at": st.started_at
-            }
-            if status == 'terminated':
-                returned_status.update({
-                    "finished_at": getattr(st, "finished_at", None),
-                    "exit_code": getattr(st, "exit_code", None),
-                    "reason": getattr(st, "reason", None)
-                })
-            return {
-                status: returned_status
-            }
-        except AttributeError:
-            return self.status if self.status != 'running' else 'deleted'
-
-    def terminate_pod(self):
-        """
-        Terminate a pod, checking if during the process
-        fails to do so, or is in an errored-out status already
-        """
-        v1 = KubernetesClient()
-        has_error = False
-        try:
-            v1.delete_namespaced_pod(self.pod_name(), namespace=TASK_NAMESPACE)
-        except ApiException as kexc:
-            logger.error(kexc.reason)
-            has_error = True
-
-        try:
-            self.status = 'cancelled'
-        except Exception as exc:
-            raise DBError("An error occurred while updating") from exc
-
-        if has_error:
-            raise TaskExecutionException("Task already cancelled")
-        return self.sanitized_dict()
-
-    def get_results(self):
-        """
-        The idea is to create a job that holds indefinitely
-        so that the backend can copy the results
-        """
-        v1_batch = KubernetesBatchClient()
-        job_name = f"result-job-{uuid4()}"
-        job = v1_batch.create_job_spec({
-            "name": job_name,
-            "persistent_volumes": [
-                {
-                    "name": f"{self.get_current_pod(is_running=False).metadata.name}-volclaim",
-                    "mount_path": TASK_POD_RESULTS_PATH,
-                    "vol_name": "data",
-                    "sub_path": f"{self.id}/results"
-                }
-            ],
-            "labels": {
-                "result_task_id": str(self.id),
-                "requested_by": self.requested_by
-            }
-        })
-        try:
-            v1_batch.create_namespaced_job(
-                namespace=TASK_NAMESPACE,
-                body=job,
-                pretty='true'
-            )
-            # Get the job's pod
-            v1 = KubernetesClient()
-            v1.is_pod_ready(label=f"job-name={job_name}")
-
-            job_pod = v1.list_namespaced_pod(namespace=TASK_NAMESPACE, label_selector=f"job-name={job_name}").items[0]
-
-            res_file = v1.cp_from_pod(
-                pod_name=job_pod.metadata.name,
-                source_path=TASK_POD_RESULTS_PATH,
-                dest_path=f"{RESULTS_PATH}/{self.id}/results",
-                out_name=f"{PUBLIC_URL}-results-{self.id}"
-            )
-            v1.delete_pod(job_pod.metadata.name)
-            v1_batch.delete_job(job_name)
-        except ApiException as e:
-            if 'job_pod' in locals() and self.get_current_pod(job_pod.metadata.name):
-                v1_batch.delete_job(job_name)
-            logger.error(getattr(e, 'reason'))
-            raise InvalidRequest(f"Failed to run pod: {e.reason}") from e
-        except urllib3.exceptions.MaxRetryError as mre:
-            raise InvalidRequest("The cluster could not create the job") from mre
-        return res_file
-
-    def create_controller_crd(self):
+    async def create_controller_crd(self):
         """
         In case this is a task triggered by users
         directly through the API, create a CRD
@@ -451,41 +212,243 @@ class Task(db.Model, BaseModel):
         by the controller at this stage, so we populate them
         with default values.
 
-        If the TASK_CONTROLLER env variable is not set, do nothing
+        If the settings.task_controller env variable is not set, do nothing
         """
-        crd_client = KubernetesCRDClient()
+        if not settings.task_controller:
+            return
+
+        kc_client: Keycloak = await Keycloak.create()
+        crd_client: KubernetesCRDClient = await KubernetesCRDClient.create()
         try:
-            crd_client.create_cluster_custom_object(
-                CRD_DOMAIN, 'v1', 'analytics',
+            await crd_client.api_client.create_cluster_custom_object(
+                settings.crd_domain,
+                "v1",
+                "analytics",
                 {
-                    "apiVersion": f"{CRD_DOMAIN}/v1",
+                    "apiVersion": f"{settings.crd_domain}/v1",
                     "kind": "Analytics",
                     "metadata": {
                         "annotations": {
-                            f"{CRD_DOMAIN}/user": 'ok',
-                            f"{CRD_DOMAIN}/task_id": str(self.id),
-                            f"{CRD_DOMAIN}/done": 'true'
+                            f"{settings.crd_domain}/user": "ok",
+                            f"{settings.crd_domain}/task_id": str(self.id),
+                            f"{settings.crd_domain}/done": "true",
                         },
-                        "name": f"fn-task-{self.id}"
+                        "name": f"fn-task-{self.id}",
                     },
                     "spec": {
                         "dataset": {"name": self.dataset.name},
                         "image": self.docker_image,
                         "project": "federated_node",
                         "source": {
-                            "repository": self.dataset.repository or "Aridhia-Open-Source/PHEMS_federated_node"
+                            "repository": self.dataset.repository
+                            or "Aridhia-Open-Source/PHEMS_federated_node"
                         },
                         "user": {
                             "idpId": "",
-                            "username": Keycloak().get_user_by_id(self.requested_by)["username"]
-                        }
-                    }
-                }
+                            "username": (await kc_client.get_user_by_id(self.requested_by))[
+                                "username"
+                            ],
+                        },
+                    },
+                },
             )
         except ApiException as apie:
             if apie.status != 409:
                 raise TaskCRDExecutionException(apie.body, apie.status) from apie
+
+    async def run(self, validate=False) -> None:
+        """
+        Method to spawn a new pod with the requested image
+        : param validate : An optional parameter to basically run in dry_run mode
+            Defaults to False
+        """
+        v1: KubernetesClient = await KubernetesClient.create()
+        secret_name = self.dataset.get_creds_secret_name()
+        provided_env = self.executors[0].get("env", {})
+
+        command = None
+        if len(self.executors):
+            command = self.executors[0].get("command", "")
+
+        body: V1Pod = await TaskPod(
+            **{
+                "name": self.pod_name(),
+                "image": self.docker_image,
+                "dataset": self.dataset,
+                "db_query": self.db_query,
+                "labels": {
+                    "task_id": str(self.id),
+                    "requested_by": self.requested_by,
+                    "dataset_id": str(self.dataset_id),
+                    "delete_by": self.get_expiration_date(),
+                },
+                "dry_run": "true" if validate else "false",
+                "environment": provided_env,
+                "command": command,
+                "mount_path": self.outputs,
+                "input_path": self.inputs,
+                "resources": self.resources,
+                "env_from": v1.create_from_env_object(secret_name),
+                "regcred_secret": self.regcred_secret,
+            }
+        ).create_pod_spec()
+        try:
+            current_pod: V1Pod | None = await self.get_current_pod()
+            if current_pod:
+                raise TaskExecutionException("Pod is already running", code=409)
+
+            await v1.api_client.create_namespaced_pod(
+                namespace=settings.task_namespace, body=body, pretty="true"
+            )
+        except ApiException as e:
+            logger.error(json.loads(e.body))
+            raise InvalidRequest(f"Failed to run pod: {e.reason}") from e
+
+        if self.needs_crd():
+            # create CRD
+            await self.create_controller_crd()
+
+    async def get_current_pod(self, is_running: bool = True):
+        """
+        Fetches the pod object from k8s API.
+            is_running will only consider running pods only
+        """
+        v1: KubernetesClient = await KubernetesClient.create()
+        running_pods: V1PodList = await v1.api_client.list_namespaced_pod(
+            settings.task_namespace, label_selector=f"task_id={self.id}"
+        )
+        try:
+            running_pods.items.sort(key=lambda x: x.metadata.creation_timestamp, reverse=True)
+            for pod in running_pods.items:
+                images: list[str] = [im.image for im in pod.spec.containers]
+                statuses = []
+                if pod.status.container_statuses and is_running:
+                    statuses: list[V1ContainerStateTerminated] = [
+                        st.state.terminated for st in pod.status.container_statuses
+                    ]
+                if self.docker_image in images and not statuses:
+                    return pod
+        except IndexError:
             pass
+        return None
+
+    async def update_status(self):
+        """
+        k8s sdk returns a bunch of nested objects as a pod's status.
+        Here the objects are deconstructed and a customized dictionary is returned
+            according to the possible states.
+        Returns:
+            :dict: if the pod exists
+            :str: if the pod is not found or deleted
+        """
+        status = self.pod_status
+        if self.get_expiration_date(as_dt=True) < datetime.now():
+            self.pod_status = "deleted"
+            return self.pod_status
+
+        try:
+            status_obj: list[V1ContainerStatus] = (
+                await self.get_current_pod(is_running=False)
+            ).status.container_statuses
+            if status_obj is None:
+                return status
+
+            status_obj = status_obj[0].state
+
+            for status in ["running", "waiting", "terminated"]:
+                st = getattr(status_obj, status)
+                if st is not None:
+                    break
+
+            returned_status: dict[str, Any] = {"started_at": st.started_at}
+            if status == "terminated":
+                returned_status.update(
+                    {
+                        "finished_at": getattr(st, "finished_at", None),
+                        "exit_code": getattr(st, "exit_code", None),
+                        "reason": getattr(st, "reason", None),
+                    }
+                )
+            self.pod_status = status
+            return {status: returned_status}
+        except AttributeError:
+            self.pod_status = status if status != "running" else "deleted"
+
+    async def terminate_pod(self, session: AsyncSession) -> None:
+        """
+        Terminate a pod, checking if during the process
+        fails to do so, or is in an errored-out status already
+        """
+        v1: KubernetesClient = await KubernetesClient.create()
+        has_error = False
+        try:
+            await v1.api_client.delete_namespaced_pod(
+                self.pod_name(), namespace=settings.task_namespace
+            )
+        except ApiException as kexc:
+            logger.error(kexc.reason)
+            has_error = True
+
+        try:
+            self.pod_status = "cancelled"
+        except Exception as exc:
+            raise DBError("An error occurred while updating") from exc
+
+        if has_error:
+            raise TaskExecutionException("Task already cancelled")
+
+    async def get_results(self):
+        """
+        The idea is to create a job that holds indefinitely
+        so that the backend can copy the results
+        """
+        v1_batch: KubernetesBatchClient = await KubernetesBatchClient.create()
+        current_pod: V1Pod | None = await self.get_current_pod(is_running=False)
+        job_name: str = f"result-job-{uuid4()}"
+        job: V1Job = v1_batch.create_job_spec(
+            {
+                "name": job_name,
+                "persistent_volumes": [
+                    {
+                        "name": f"{current_pod.metadata.name}-volclaim",
+                        "mount_path": settings.task_pod_results_path,
+                        "vol_name": "data",
+                        "sub_path": f"{self.id}/results",
+                    }
+                ],
+                "labels": {"result_task_id": str(self.id), "requested_by": self.requested_by},
+            }
+        )
+        try:
+            await v1_batch.api_client.create_namespaced_job(
+                namespace=settings.task_namespace, body=job, pretty="true"
+            )
+            # Get the job's pod
+            v1: KubernetesClient = await KubernetesClient.create()
+            await v1.is_pod_ready(label=f"job-name={job_name}")
+
+            job_pod: V1Pod = (
+                await v1.api_client.list_namespaced_pod(
+                    namespace=settings.task_namespace, label_selector=f"job-name={job_name}"
+                )
+            ).items[0]
+
+            res_file: str = await v1.cp_from_pod(
+                pod_name=job_pod.metadata.name,
+                source_path=settings.task_pod_results_path,
+                dest_path=f"{settings.results_path}/{self.id}/results",
+                out_name=f"{settings.public_url}-results-{self.id}",
+            )
+            await v1.delete_pod(job_pod.metadata.name)
+            await v1_batch.delete_job(job_name)
+        except ApiException as e:
+            if "job_pod" in locals() and await self.get_current_pod(job_pod.metadata.name):
+                await v1_batch.delete_job(job_name)
+            logger.error(getattr(e, "reason"))
+            raise InvalidRequest(f"Failed to run pod: {e.reason}") from e
+        except urllib3.exceptions.MaxRetryError as mre:
+            raise InvalidRequest("The cluster could not create the job") from mre
+        return res_file
 
     def get_review_status(self) -> str:
         """
@@ -497,84 +460,80 @@ class Task(db.Model, BaseModel):
         """
         return REVIEW_STATUS[self.review_status]
 
-    def sanitized_dict(self):
-        """
-        Extend the method to add custom status and review
-        """
-        san_dict = super().sanitized_dict()
-        san_dict["status"] = self.get_status()
-        if TASK_REVIEW:
-            san_dict["review_status"] = self.get_review_status()
-
-        return san_dict
-
-    def crd_name(self):
+    async def crd_name(self):
         """
         CRD name is set here for consistency's sake
         """
-        v1_crds = KubernetesCRDClient().list_cluster_custom_object(
-            CRD_DOMAIN, "v1", "analytics"
+        v1_crds: KubernetesCRDClient = await KubernetesCRDClient.create()
+        crds = await v1_crds.api_client.list_cluster_custom_object(
+            settings.crd_domain, "v1", "analytics"
         )
-        for crd in v1_crds["items"]:
-            if crd["metadata"]["annotations"].get(f"{CRD_DOMAIN}/task_id") == str(self.id):
+        for crd in crds["items"]:
+            if crd["metadata"]["annotations"].get(f"{settings.crd_domain}/task_id") == str(
+                self.id
+            ):
                 return crd["metadata"]["name"]
+        return None
 
-    def get_task_crd(self) -> V1CustomResourceDefinition|None:
+    async def get_task_crd(self) -> dict | None:
         """
         Find the CRD associated with the current task.
             Ignore if not found
         """
-        crd_client = KubernetesCRDClient()
+        crd_client: KubernetesCRDClient = await KubernetesCRDClient.create()
         try:
-            return crd_client.get_cluster_custom_object(
-                CRD_DOMAIN,
-                "v1",
-                "analytics",
-                self.crd_name()
+            return await crd_client.api_client.get_cluster_custom_object(
+                settings.crd_domain, "v1", "analytics", await self.crd_name()
             )
         except ApiException as apie:
             if apie.status == 404:
                 return None
             raise TaskCRDExecutionException(apie.body, apie.status) from apie
 
-    def update_task_crd(self, approval:bool):
+    async def update_task_crd(self, approval: bool):
         """
         In case the review happened, update the CRD
         annotation with the appropriate approved value
         """
-        crd_client = KubernetesCRDClient()
-        crd_client.api_client.set_default_header('Content-Type', 'application/json-patch+json')
+        crd_client: KubernetesCRDClient = await KubernetesCRDClient.create()
+        crd_client.api_client.set_default_header("Content-Type", "application/json-patch+json")
         try:
-            task_crd: V1CustomResourceDefinition | None = self.get_task_crd()
+            task_crd: dict | None = await self.get_task_crd()
             if not task_crd:
                 raise TaskExecutionException("Failed to update result delivery")
 
             annotations = task_crd["metadata"].get("annotations", {})
-            annotations[f"{CRD_DOMAIN}/approved"] = str(approval)
-            crd_client.patch_cluster_custom_object(
-                CRD_DOMAIN, "v1", "analytics", self.crd_name(),
-                [{"op": "add", "path": "/metadata/annotations", "value": annotations}]
+            annotations[f"{settings.crd_domain}/approved"] = str(approval)
+            await crd_client.api_client.patch_cluster_custom_object(
+                settings.crd_domain,
+                "v1",
+                "analytics",
+                await self.crd_name(),
+                [{"op": "add", "path": "/metadata/annotations", "value": annotations}],
             )
         except ApiException as apie:
             raise TaskCRDExecutionException(apie.body, apie.status) from apie
 
-    def get_logs(self):
+    async def get_logs(self) -> list[str] | Literal["Task queued"]:
         """
         Retrieve the pod's logs
         """
-        if 'waiting' in self.get_status():
+        await self.update_status()
+        if "waiting" in self.pod_status:
             return "Task queued"
 
-        pod = self.get_current_pod(is_running=False)
+        pod: V1Pod | None = await self.get_current_pod(is_running=False)
         if pod is None:
             raise TaskExecutionException(f"Task pod {self.id} not found", 400)
 
-        v1 = KubernetesClient()
+        v1: KubernetesClient = await KubernetesClient.create()
         try:
-            return v1.read_namespaced_pod_log(
-                pod.metadata.name, timestamps=True,
-                namespace=TASK_NAMESPACE,
-                container=pod.metadata.name
-            ).splitlines()
+            pod_logs_full = await v1.api_client.read_namespaced_pod_log(
+                pod.metadata.name,
+                timestamps=True,
+                namespace=settings.task_namespace,
+                container=pod.metadata.name,
+            )
+            return pod_logs_full.splitlines()
         except ApiException as apie:
             raise TaskExecutionException("Failed to fetch the logs") from apie
