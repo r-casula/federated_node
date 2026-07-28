@@ -10,8 +10,6 @@ class ContainerBase(BaseModel):
     name: str
     tag: Optional[str] = None
     sha: Optional[str] = None
-    ml: bool = False
-    dashboard: bool = False
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -44,11 +42,6 @@ class ContainerCreate(ContainerBase):
             )
 
 
-class ContainerUpdate(BaseModel):
-    ml: Optional[bool] = None
-    dashboard: Optional[bool] = None
-
-
 class ContainerRead(ContainerBase):
     id: int
     registry_id: int
@@ -58,8 +51,6 @@ class ContainerFilters(BaseModel):
     id__lte: Optional[int] = None
     id__gte: Optional[int] = None
     registry_id: Optional[int] = None
-    ml: Optional[bool] = None
-    dashboard: Optional[bool] = None
     tag: Optional[str] = None
     sha: Optional[str] = None
     name: Optional[str] = None

@@ -1,6 +1,25 @@
 # Releases Changelog
+## 1.18.0
+- Fully implement NFS storage support for on-prem installations
+- Remove legacy endpoints
 
-# 1.12.0
+## 1.17.0
+- Fix volume mount path for AWS EBS storage job in task controller
+- Add storage mount options configuration to task controller 
+
+## 1.16.0
+- Add task storage PV parameter to configure mount options
+
+## 1.15.0
+- Make image whitelisting optional and off by default
+
+## 1.14.0
+- Add task controller Helm chart option for configuring azure storage provisioner
+
+## 1.13.0
+- Add Helm chart option for configuring azure storage provisioner
+
+## 1.12.0
 
 ### Bugfixes
 

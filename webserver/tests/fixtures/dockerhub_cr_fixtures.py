@@ -57,6 +57,6 @@ async def registry(client, respx_mock, registry_secret_mock, dockerhub_login_req
 @fixture
 async def container(client, k8s_client, registry, image_name, db_session) -> Container:
     img, tag = image_name.split(':')
-    cont = Container(name=img, registry=registry, tag=tag, dashboard=True)
+    cont = Container(name=img, registry=registry, tag=tag)
     await cont.add(db_session)
     return cont

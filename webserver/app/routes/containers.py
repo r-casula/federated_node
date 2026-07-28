@@ -17,8 +17,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.ext.asyncio import AsyncSession as DBSession
 
 from app.helpers.base_model import get_db
-from app.helpers.exceptions import DBRecordNotFoundError, InvalidRequest
+from app.helpers.exceptions import UnauthorizedError
 from app.helpers.query_filters import apply_filters
+from app.helpers.settings import settings
 from app.helpers.wrappers import Auth, audit
 from app.models.container import Container
 from app.models.registry import Registry
@@ -26,7 +27,6 @@ from app.schemas.containers import (
     ContainerCreate,
     ContainerFilters,
     ContainerRead,
-    ContainerUpdate,
 )
 from app.schemas.pagination import PageResponse
 from app.services.containers import ContainerService
@@ -37,7 +37,19 @@ logger.setLevel(logging.INFO)
 router = APIRouter(tags=["containers"], prefix="/containers")
 
 
-@router.get("", dependencies=[Depends(Auth("can_do_admin"))])
+def require_image_whitelist() -> None:
+    """
+    Gate the container endpoints: when image whitelisting is disabled the
+    container catalogue is not in use, so the endpoints are not available.
+    Mirrors the upstream ``before_request`` hook and runs before auth.
+    """
+    if not settings.image_whitelist_enabled:
+        raise UnauthorizedError("Container validation is disabled")
+
+
+@router.get(
+    "", dependencies=[Depends(require_image_whitelist), Depends(Auth("can_do_admin"))]
+)
 @audit
 async def get_all_containers(
     request: Request,
@@ -52,7 +64,11 @@ async def get_all_containers(
     return PageResponse[ContainerRead].model_validate(pagination).model_dump()
 
 
-@router.post("", dependencies=[Depends(Auth("can_do_admin"))], status_code=HTTPStatus.CREATED)
+@router.post(
+    "",
+    dependencies=[Depends(require_image_whitelist), Depends(Auth("can_do_admin"))],
+    status_code=HTTPStatus.CREATED,
+)
 @audit
 async def add_image(
     request: Request, body: ContainerCreate, session: DBSession = Depends(get_db)
@@ -65,7 +81,9 @@ async def add_image(
     return ContainerRead.model_validate(image).model_dump()
 
 
-@router.get("/{image_id}", dependencies=[Depends(Auth("can_do_admin"))])
+@router.get(
+    "/{image_id}", dependencies=[Depends(require_image_whitelist), Depends(Auth("can_do_admin"))]
+)
 @audit
 async def get_image_by_id(
     request: Request, image_id: int, session: DBSession = Depends(get_db)
@@ -74,28 +92,22 @@ async def get_image_by_id(
     GET /containers/<image_id>
     """
     image: Container = await Container.get_by_id_or_raise(session, image_id)
-    if not image:
-        raise DBRecordNotFoundError(f"Container with id {image_id} does not exist")
-
     return ContainerRead.model_validate(image).model_dump()
 
 
-@router.patch(
-    "/{image_id}", dependencies=[Depends(Auth("can_do_admin"))], status_code=HTTPStatus.CREATED
+@router.delete(
+    "/{image_id}", dependencies=[Depends(require_image_whitelist), Depends(Auth("can_do_admin"))]
 )
 @audit
-async def patch_containers_by_id_or_name(
-    request: Request, image_id: int, body: ContainerUpdate, session: DBSession = Depends(get_db)
-):
+async def delete_image(
+    request: Request, image_id: int, session: DBSession = Depends(get_db)
+) -> dict[str, Any]:
     """
-    PATCH /containers/id endpoint. Edits an existing container image with a given id
+    DELETE /containers/<image_id>
     """
-    container: Container = await Container.get_by_id_or_raise(session, image_id)
-    changes = body.model_dump(exclude_unset=True)
-    if not changes:
-        raise InvalidRequest("No valid changes detected")
-
-    await container.update(session, changes)
+    image: Container = await Container.get_by_id_or_raise(session, image_id)
+    await image.delete(session)
+    return {"message": f"Image {image_id} deleted successfully"}
 
 
 @router.post("/sync", dependencies=[Depends(Auth("can_do_admin"))], status_code=HTTPStatus.CREATED)
@@ -104,11 +116,8 @@ async def sync(request: Request, session: DBSession = Depends(get_db)) -> dict[s
     """
     POST /containers/sync
         syncs up the list of available containers from the
-        available registries and adds them to the DB table
-        with both dashboard and ml flags to false, effectively
-        making them not usable. To "enable" them one of those
-        flags has to set to true. This is done to avoid undesirable
-        or unintended containers to be used on a node.
+        available registries and adds them to the DB table,
+        making them part of the allowed image whitelist.
     """
     synched: list[Container] = []
     registry_query = await session.execute(select(Registry).where(Registry.active))

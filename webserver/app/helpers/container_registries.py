@@ -120,7 +120,21 @@ class BaseRegistry:
         if not tags_list:
             return False
 
-        return tag in tags_list["tag"] or sha in tags_list["sha"]
+        return (tag and tag in tags_list["tag"]) or (sha and sha in tags_list["sha"])
+
+    def get_tag_sha(self, image:str, tag:str) -> str|None:
+        """
+        Get the SHA for a specific tag
+        """
+        metadata = self.get_image_tags(image)
+        if not metadata:
+            return None
+
+        try:
+            index = metadata["tag"].index(tag)
+            return metadata["sha"][index]
+        except (ValueError, KeyError, IndexError):
+            return None
 
 
 class AzureRegistry(BaseRegistry):

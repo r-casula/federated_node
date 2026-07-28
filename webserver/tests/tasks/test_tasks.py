@@ -710,15 +710,76 @@ class TestPostTask(BaseTest):
             mock_kc_client_task_service
         ):
         """
-        Tests task creation returns 500 with a requested docker image is not found
+        Tests task creation returns 403 when a requested docker image is not found
         """
         response = await client.post(
             '/tasks',
             json=task_body,
             headers=post_json_admin_header
         )
-        assert response.status_code == 500
+        assert response.status_code == 403
         assert response.json() == {"error": f"Image {task_body["executors"][0]["image"]} not found on our repository"}
+
+    @mark.asyncio
+    async def test_create_task_image_not_whitelisted(
+            self,
+            mocker,
+            post_json_admin_header,
+            client,
+            registry_client,
+            v1_task_mock,
+            mock_args_k8s,
+            task_body,
+            mock_kc_client_task_service
+        ):
+        """
+        Tests task creation returns 403 when the image is not whitelisted and
+        image whitelisting is enabled
+        """
+        mocker.patch("app.helpers.settings.settings.enable_image_whitelist", "true")
+        mocker.patch(
+            "app.models.container.Container.validate_image_whitelisted",
+            new=mock.AsyncMock(return_value=False)
+        )
+
+        response = await client.post(
+            '/tasks',
+            json=task_body,
+            headers=post_json_admin_header
+        )
+        assert response.status_code == 403
+        assert "is not whitelisted" in response.json()["error"]
+
+    @mark.asyncio
+    async def test_create_task_image_whitelisted_success(
+            self,
+            mocker,
+            post_json_admin_header,
+            client,
+            v1_task_mock,
+            mock_args_k8s,
+            registry_client,
+            task_body,
+            mock_kc_client_task_service,
+            mock_args_crd,
+            v1_crd_mock
+        ):
+        """
+        Tests task creation succeeds when the image is whitelisted and image
+        whitelisting is enabled
+        """
+        mocker.patch("app.helpers.settings.settings.enable_image_whitelist", "true")
+        mocker.patch(
+            "app.models.container.Container.validate_image_whitelisted",
+            new=mock.AsyncMock(return_value=True)
+        )
+
+        response = await client.post(
+            '/tasks',
+            json=task_body,
+            headers=post_json_admin_header
+        )
+        assert response.status_code == 201
 
     @mark.asyncio
     async def test_create_task_inputs_not_default(

@@ -1,6 +1,7 @@
-from pytest import mark
+from pytest import mark, raises
 import base64
 import json
+from unittest.mock import AsyncMock
 from kubernetes_asyncio.client import ApiException
 from sqlalchemy import func, select
 
@@ -8,6 +9,8 @@ from tests.fixtures.azure_cr_fixtures import *
 from tests.fixtures.common_registry_fixtures import *
 from tests.base_test_class import BaseTest
 from app.helpers.settings import settings, kc_settings
+from app.helpers.exceptions import InvalidRequest
+from app.models.registry import Registry
 
 
 class TestGetRegistriesApi(BaseTest):
@@ -616,3 +619,67 @@ class TestPatchRegistriesApi(BaseTest):
         )
         assert resp.status_code == 400
         assert resp.json()["error"] == "Could not update credentials"
+
+
+class TestRegistryModel(BaseTest):
+    @mark.asyncio
+    async def test_registry_validate_image_exist_success(self, mocker, registry):
+        """Registry.validate_image_exist returns True when image exists remotely"""
+        mock_reg_client = AsyncMock()
+        mock_reg_client.has_image_tag_or_sha.return_value = True
+        mocker.patch.object(
+            Registry, 'get_registry_class', new=AsyncMock(return_value=mock_reg_client)
+        )
+
+        assert await Registry.validate_image_exist(
+            self.db_session, f"{registry.url}/some-image:latest"
+        ) is True
+
+    @mark.asyncio
+    async def test_registry_extract_image_parts_with_tag(self, registry):
+        """Registry.extract_image_parts with tag"""
+        reg, name, tag, sha = await Registry.extract_image_parts(
+            self.db_session, f"{registry.url}/my-image:v1"
+        )
+        assert reg.id == registry.id
+        assert name == "my-image"
+        assert tag == "v1"
+        assert sha is None
+
+    @mark.asyncio
+    async def test_registry_extract_image_parts_with_sha(self, registry):
+        """Registry.extract_image_parts with sha"""
+        test_sha = "sha256:" + "a" * 64
+        reg, name, tag, sha = await Registry.extract_image_parts(
+            self.db_session, f"{registry.url}/my-image@{test_sha}"
+        )
+        assert reg.id == registry.id
+        assert name == "my-image"
+        assert tag is None
+        assert sha == test_sha
+
+    @mark.asyncio
+    async def test_registry_extract_image_parts_with_tag_and_sha(self, registry):
+        """Registry.extract_image_parts with both tag and sha"""
+        test_sha = "sha256:" + "b" * 64
+        reg, name, tag, sha = await Registry.extract_image_parts(
+            self.db_session, f"{registry.url}/my-image:v1@{test_sha}"
+        )
+        assert reg.id == registry.id
+        assert name == "my-image"
+        assert tag == "v1"
+        assert sha == test_sha
+
+    @mark.asyncio
+    async def test_registry_extract_image_parts_missing_tag_or_sha(self, registry):
+        """Registry.extract_image_parts fails when tag or sha is missing"""
+        with raises(InvalidRequest) as exc:
+            await Registry.extract_image_parts(self.db_session, f"{registry.url}/my-image")
+        assert "must have a tag or a sha" in str(exc.value)
+
+    @mark.asyncio
+    async def test_registry_extract_image_parts_unknown_registry(self, registry):
+        """Registry.extract_image_parts fails when registry is unknown"""
+        with raises(InvalidRequest) as exc:
+            await Registry.extract_image_parts(self.db_session, "unknown-registry.io/image:tag")
+        assert "Could not find the image in the mapped registries" in str(exc.value)

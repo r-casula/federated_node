@@ -45,6 +45,6 @@ async def registry(client, registry_secret_mock, cr_name, db_session) -> Registr
 @fixture
 async def container(client, k8s_client, registry, image_name, db_session) -> Container:
     img, tag = image_name.split(':')
-    cont = Container(name=img, registry=registry, tag=tag, dashboard=True)
+    cont = Container(name=img, registry=registry, tag=tag)
     await cont.add(db_session)
     return cont

@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, List
 
 from kubernetes_asyncio.client.exceptions import ApiException
 from kubernetes_asyncio.client.models.v1_secret import V1Secret
-from sqlalchemy import Boolean, Integer, String
+from sqlalchemy import Boolean, Integer, String, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.orm.properties import MappedColumn
@@ -196,3 +196,42 @@ class Registry(BaseModel):  # pylint: disable=missing-class-docstring
         except ApiException as apie:
             logger.error("Reason: %s\nDetails: %s", apie.reason, apie.body)
             raise InvalidRequest("Could not update credentials") from apie
+
+    @classmethod
+    async def extract_image_parts(
+        cls, session: AsyncSession, docker_image: str
+    ) -> tuple["Registry", str, str, str]:
+        """
+        Extract the registry object, image name, tag, and sha from the docker image string.
+        """
+        parts = docker_image.split("/")
+        for i in range(len(parts) + 1):
+            registry_url = "/".join(parts[0:i])
+            q = select(Registry).where(Registry.url == registry_url)
+            registry = (await session.execute(q)).scalars().one_or_none()
+            if registry:
+                image_path = "/".join(parts[i:])
+                tag = None
+                sha = None
+                if "@" in image_path:
+                    image_name, sha = image_path.split("@")
+                    if ":" in image_name:
+                        image_name, tag = image_name.split(":")
+                elif ":" in image_path:
+                    image_name, tag = image_path.split(":")
+                else:
+                    raise InvalidRequest(f"Image {docker_image} must have a tag or a sha")
+                return registry, image_name, tag, sha
+
+        raise InvalidRequest(
+            "Could not find the image in the mapped registries. Check the image has the full name"
+        )
+
+    @classmethod
+    async def validate_image_exist(cls, session: AsyncSession, docker_image: str) -> bool:
+        """
+        Validate that the image exists in the remote registry.
+        """
+        registry, image_name, tag, sha = await cls.extract_image_parts(session, docker_image)
+        registry_client = await registry.get_registry_class()
+        return await registry_client.has_image_tag_or_sha(image_name, tag, sha)

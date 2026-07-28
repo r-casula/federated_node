@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     aws_storage_enabled: Optional[str] = None
     aws_storage_driver: Optional[str] = None
     aws_files_system_id: Optional[str] = None
+    enable_image_whitelist: Optional[str] = "false"
+    mount_options: Optional[str] = None
+
+    @property
+    def image_whitelist_enabled(self) -> bool:
+        """
+        Interprets the ``enable_image_whitelist`` env var (a string, since env
+        vars can only carry strings) as a boolean. Also tolerates being patched
+        with a real bool in tests.
+        """
+        return str(self.enable_image_whitelist).lower() == "true"
 
 
 class KeycloakSettings(BaseSettings):

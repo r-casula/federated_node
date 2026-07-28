@@ -54,7 +54,7 @@ class KeycloakError(LogAndException):
 
 
 class TaskImageException(LogAndException):
-    pass
+    code = 403
 
 
 class TaskExecutionException(LogAndException):

@@ -20,6 +20,7 @@ from kubernetes_asyncio.client import (
     V1Volume,
     V1VolumeMount,
     V1VolumeResourceRequirements,
+    V1NFSVolumeSource,
 )
 
 from app.helpers.kubernetes import KubernetesClient
@@ -110,6 +111,7 @@ class TaskPod:
             access_modes=["ReadWriteMany"],
             capacity={"storage": os.getenv("CLAIM_CAPACITY")},
             storage_class_name=settings.storage_class,
+            mount_options=settings.mount_options.split(",") if settings.mount_options else None
         )
         if os.getenv("AZURE_STORAGE_ENABLED"):
             pv_spec.azure_file = V1AzureFilePersistentVolumeSource(
@@ -121,6 +123,12 @@ class TaskPod:
             pv_spec.csi = V1CSIPersistentVolumeSource(
                 driver=os.getenv("AWS_STORAGE_DRIVER"),
                 volume_handle=os.getenv("AWS_FILES_SYSTEM_ID"),
+            )
+        elif os.getenv("NFS_STORAGE_ENABLED"):
+            pv_spec.nfs=V1NFSVolumeSource(
+                server=os.getenv("NFS_SERVER"),
+                path=os.getenv("NFS_PATH"),
+                read_only=False
             )
         else:
             pv_spec.host_path = V1HostPathVolumeSource(path=settings.results_path)

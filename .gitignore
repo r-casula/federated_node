@@ -27,3 +27,6 @@ debug.yaml
 # Ignore example values files while developing (remove later)
 !example.values.yaml
 uv.lock
+
+# AI
+.claude/**

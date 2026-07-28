@@ -125,6 +125,12 @@ class Task(BaseModel):
         Looks through the CRs for the image and if exists,
         returns the full image name with the repo prefixing the image.
         """
+        # When image whitelisting is enabled, the image must be explicitly allowed
+        if settings.image_whitelist_enabled and not await Container.validate_image_whitelisted(
+            session, docker_image
+        ):
+            raise TaskImageException(f"Image {docker_image} is not whitelisted")
+
         registry, image = await cls.split_registry_from_image(session, docker_image)
 
         tag = None

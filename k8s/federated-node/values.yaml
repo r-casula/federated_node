@@ -52,7 +52,7 @@ taskReview: false
 
 federatedNode:
   allow_delivery_api: false
-  enable_registry_sync: false
+  enable_image_whitelist: false
   port: 5000
   volumes:
     results_path: /mnt/results
@@ -60,9 +60,11 @@ federatedNode:
 
 storage:
   capacity: 10Gi
+  mountOptions: []
   # azure:
     # secretName:
     # shareName:
+    # provisioner:
   # aws:
     # fileSystemId:
     # accessPointId:
