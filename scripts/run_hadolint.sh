@@ -26,7 +26,7 @@ docker run \
   --workdir /mnt \
   --init \
   --rm \
-  hadolint/hadolint:latest-alpine hadolint $HADOLINT_FLAGS $DOCKERFILES
+  hadolint/hadolint:v2.15.0-alpine hadolint $HADOLINT_FLAGS $DOCKERFILES
 exit_status=$?
 
 # Generate JUnit XML artifact for CI reporting
