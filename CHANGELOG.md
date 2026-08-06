@@ -5,7 +5,7 @@
 
 ## 1.17.0
 - Fix volume mount path for AWS EBS storage job in task controller
-- Add storage mount options configuration to task controller 
+- Add storage mount options configuration to task controller
 
 ## 1.16.0
 - Add task storage PV parameter to configure mount options
@@ -23,7 +23,7 @@
 
 ### Bugfixes
 
-- Containers without a tag sometimes cause infinite loops due to faulty regex. [#310](https://github.com/Aridhia-Open-Source/PHEMS_federated_node/issues/310)
+- Containers without a tag sometimes cause infinite loops due to faulty regex. [#310](https://github.com/r-casula/PHEMS_federated_node/issues/310)
 
 ## 1.11.0
 - Added a flag for conditional automatic results returns for tasks triggered by the API, `federatedNode.allow_delivery_api`. Defaults to `false`.

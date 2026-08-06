@@ -241,7 +241,7 @@ class Task(BaseModel):
                         "project": "federated_node",
                         "source": {
                             "repository": self.dataset.repository
-                            or "Aridhia-Open-Source/PHEMS_federated_node"
+                            or "r-casula/PHEMS_federated_node"
                         },
                         "user": {
                             "idpId": "",
