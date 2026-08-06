@@ -5,7 +5,7 @@ propose changes, report bugs, and submit code to the project.
 
 ## Ways to contribute
 
-- **Report a bug** — open a [GitHub issue](https://github.com/Aridhia-Open-Source/PHEMS_federated_node/issues) using the bug report template.
+- **Report a bug** — open a [GitHub issue](https://github.com/r-casula/PHEMS_federated_node/issues) using the bug report template.
 - **Request a feature** — open an issue using the feature request template, describing the use case and the problem it solves.
 - **Improve documentation** — typo fixes, clarifications, and new examples are all welcome.
 - **Submit code** — fix a bug, implement a feature, or improve test coverage.
@@ -70,4 +70,4 @@ the project's existing license (GPL-3.0), as declared in the repository.
 ## Getting help
 
 If you have questions about contributing, see [SUPPORT.md](SUPPORT.md) or
-open a [discussion](https://github.com/Aridhia-Open-Source/PHEMS_federated_node/discussions).
+open a [discussion](https://github.com/r-casula/PHEMS_federated_node/discussions).

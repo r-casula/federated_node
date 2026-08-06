@@ -72,10 +72,10 @@ fn-task-controller:
       secret_name: github-app
       secret_key: GH_SECRET
       clientid_key: GH_CLIENT_ID
-      orgAndRepo: Aridhia-Open-Source/Federated-Node-Example-App
+      orgAndRepo: r-casula/Federated-Node-Example-App
   delivery:
     github:
-      repository: Aridhia-Open-Source/Federated-Node-Example-App
+      repository: r-casula/Federated-Node-Example-App
 integrations:
   domains:
    - 'self'

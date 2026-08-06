@@ -79,7 +79,7 @@ tests:
     asserts:
       - equal:
           path: data.GITHUB_DELIVERY
-          value: "Aridhia-Open-Source/Federated-Node-Example-App"
+          value: "r-casula/Federated-Node-Example-App"
   - it: backend configmap has other delivery info
     set:
       fn-task-controller:

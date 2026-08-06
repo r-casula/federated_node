@@ -17,10 +17,10 @@ and basic usage. Additional guides may be linked there as they're added.
 ## Asking a question / getting help
 
 - **GitHub Discussions** — for general questions, usage help, and ideas,
-  please use the [Discussions](https://github.com/Aridhia-Open-Source/PHEMS_federated_node/discussions)
+  please use the [Discussions](https://github.com/r-casula/PHEMS_federated_node/discussions)
   tab. This keeps Q&A searchable for future users with the same question.
 - **GitHub Issues** — if you've found a reproducible bug or want to request
-  a feature, open an [issue](https://github.com/Aridhia-Open-Source/PHEMS_federated_node/issues)
+  a feature, open an [issue](https://github.com/r-casula/PHEMS_federated_node/issues)
   using the appropriate template. Please search existing issues first to
   avoid duplicates.
 

@@ -2179,7 +2179,7 @@
           "repository": {
             "type": "string",
             "description": "For outbound mode, it links the repository source to a dataset. So all of the CRD with that repo will be \"pre-authorized\" to run on that dataset",
-            "example": "Aridhia-Open-Source/PHEMS_federated_node"
+            "example": "r-casula/PHEMS_federated_node"
           },
           "schema": {
             "type": "string",
@@ -2257,7 +2257,7 @@
           },
           "repository": {
             "type": "string",
-            "example": "Aridhia-Open-Source/PHEMS_federated_node"
+            "example": "r-casula/PHEMS_federated_node"
           },
           "extra_connection_args": {
             "type": "string",
@@ -2555,7 +2555,7 @@
           },
           "repository": {
             "type": "string",
-            "example": "Aridhia-Open-Source/PHEMS_federated_node"
+            "example": "r-casula/PHEMS_federated_node"
           }
         },
         "required": [

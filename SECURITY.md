@@ -20,7 +20,7 @@ issues, discussions, or pull requests.**
 Instead, report them privately using one of the following methods:
 
 1. **GitHub private vulnerability reporting** (preferred): go to the
-   [Security tab](https://github.com/Aridhia-Open-Source/PHEMS_federated_node/security)
+   [Security tab](https://github.com/r-casula/PHEMS_federated_node/security)
    of this repository and select **"Report a vulnerability"**.
 2. **Email**: send details to **opensource@aridhia.com** with a subject
    line starting `[SECURITY]`.

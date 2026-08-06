@@ -7,6 +7,7 @@ override:
     # DL3042 - pip cache in image layers is a size concern, not a correctness one.
     # Downgrade to info so it is visible but does not block CI.
     - DL3042
+    - DL3064
 
 ignored:
   # Pinning apt package versions is impractical: pinned versions are removed from

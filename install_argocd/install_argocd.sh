@@ -21,7 +21,7 @@ argocd --port-forward --port-forward-namespace argocd \
     --password "$(kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d)"
 
 # Add Repo from github
-for repo in "https://github.com/Aridhia-Open-Source/PHEMS_federated_node" "https://github.com/Aridhia-Open-Source/federated-node-task-controller"
+for repo in "https://github.com/r-casula/PHEMS_federated_node" "https://github.com/r-casula/federated-node-task-controller"
 do
     argocd --port-forward --port-forward-namespace argocd repo add "${repo}"
 done
